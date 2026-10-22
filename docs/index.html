@@ -83,7 +83,6 @@
     let currentReleaseId = null;
     let currentTagName = null;
     let rawDownloadUrl = '';
-    let actualAssetName = '';
 
     function renderMainApp() {
         document.title = 'Web轉APK 雲端線上打包平台';
@@ -140,11 +139,6 @@
                     <label>📦 唯一英文標識 (防覆蓋安裝)</label>
                     <input type="text" class="form-input" id="appSuffix" placeholder="純字母，如 shopapp" value="myapp01">
                 </div>
-            </div>
-
-            <div class="form-group">
-                <label>💾 自定義下載 APK 文件名 (支持中文，留空則自動使用應用名稱命名)</label>
-                <input type="text" class="form-input" id="customFileName" placeholder="例如：內部商城測試版 (無需手動加 .apk)">
             </div>
 
             <button id="buildBtn" class="btn" onclick="startBuild()">🚀 開始雲端編譯 APK</button>
@@ -208,7 +202,6 @@
         const targetUrl = document.getElementById('targetUrl').value.trim();
         const appName = document.getElementById('appName').value.trim();
         const appSuffix = document.getElementById('appSuffix').value.trim() || 'webtoapk';
-        const customFileName = document.getElementById('customFileName').value.trim();
 
         if (!owner || !repo || !token) {
             alert('請先展開頂部【首次使用配置】，填寫 GitHub 用戶名、倉庫名和 Token！');
@@ -286,6 +279,7 @@
             statusTitle.innerText = '⏳ 正在向 GitHub 發送構建指令...';
             progressFill.style.width = '15%';
 
+            // 只傳入 build.yml 聲明的 4 個參數，杜絕 422 Unexpected inputs
             const dispatchRes = await ghFetch(
                 `https://api.github.com/repos/${owner}/${repo}/actions/workflows/build.yml/dispatches`,
                 token,
@@ -297,8 +291,7 @@
                             target_url: targetUrl,
                             app_name: appName,
                             app_id_suffix: appSuffix,
-                            has_custom_icon: hasCustomIcon,
-                            custom_file_name: customFileName
+                            has_custom_icon: hasCustomIcon
                         }
                     })
                 }
@@ -388,10 +381,8 @@
                 const asset = relData.assets && relData.assets[0];
                 if (asset && asset.browser_download_url) {
                     rawDownloadUrl = asset.browser_download_url;
-                    actualAssetName = decodeURIComponent(asset.name);
                     downloadBtn.href = rawDownloadUrl;
-                    downloadBtn.download = actualAssetName;
-                    downloadBtn.innerText = `⬇️ 立即下載 ${actualAssetName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
+                    downloadBtn.innerText = `⬇️ 立即下載安裝包 (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
                     downloadBtn.style.display = 'block';
                     statusTitle.innerText = '✅ APK 生成完畢，點擊按鈕即可下載並自動銷毀雲端記錄！';
                     return;
