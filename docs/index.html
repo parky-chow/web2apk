@@ -143,8 +143,8 @@
             </div>
 
             <div class="form-group">
-                <label>💾 自定義下載 APK 文件名 (留空則自動使用應用名稱命名)</label>
-                <input type="text" class="form-input" id="customFileName" placeholder="例如：我的商城_v1.0 (無需手動加 .apk)">
+                <label>💾 自定義下載 APK 文件名 (支持中文，留空則自動使用應用名稱命名)</label>
+                <input type="text" class="form-input" id="customFileName" placeholder="例如：內部商城測試版 (無需手動加 .apk)">
             </div>
 
             <button id="buildBtn" class="btn" onclick="startBuild()">🚀 開始雲端編譯 APK</button>
@@ -388,7 +388,7 @@
                 const asset = relData.assets && relData.assets[0];
                 if (asset && asset.browser_download_url) {
                     rawDownloadUrl = asset.browser_download_url;
-                    actualAssetName = asset.name;
+                    actualAssetName = decodeURIComponent(asset.name);
                     downloadBtn.href = rawDownloadUrl;
                     downloadBtn.download = actualAssetName;
                     downloadBtn.innerText = `⬇️ 立即下載 ${actualAssetName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
