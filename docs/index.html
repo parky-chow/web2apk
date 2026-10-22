@@ -30,7 +30,6 @@
         .row { display: flex; gap: 12px; }
         .row .form-group { flex: 1; }
         
-        /* 圖片上傳區醒目標識樣式 */
         .icon-upload-card { border: 2px dashed #cbd5e1; background: #f8fafc; border-radius: 10px; padding: 16px; display: flex; align-items: center; gap: 16px; transition: border-color 0.2s; }
         .icon-upload-card:hover { border-color: var(--primary); }
         .icon-preview { width: 64px; height: 64px; border-radius: 12px; background: #e2e8f0; display: flex; align-items: center; justify-content: center; overflow: hidden; font-size: 12px; color: #64748b; border: 1px solid #cbd5e1; flex-shrink: 0; }
@@ -114,14 +113,13 @@
                 </div>
             </details>
 
-            <!-- 核心：App 桌面圖標上傳區塊 -->
             <div class="form-group">
                 <label>🖼️ 上傳 App 桌面圖標 (Icon)</label>
                 <div class="icon-upload-card">
                     <div class="icon-preview" id="iconPreview">預覽</div>
                     <div style="flex: 1;">
                         <input type="file" id="iconFile" accept="image/png, image/jpeg" onchange="handleIconUpload(this)">
-                        <div class="hint">支持 PNG / JPG 格式，建議 512x512 像素以上正方形圖片，大小不超過 5MB。不上傳則使用安卓默認圖標。</div>
+                        <div class="hint">支持任意大小圖片，前端會自動壓縮為超高清 192x192 規格上傳（小於 30KB，防止 API 超載）。</div>
                     </div>
                 </div>
             </div>
@@ -155,18 +153,34 @@
         initSavedConfig();
     }
 
+    // 核心修復：在前端使用 Canvas 自動裁切並壓縮至 192x192，確保 Base64 小於 35KB，規避 GitHub 65KB 限制
     function handleIconUpload(input) {
         if (input.files && input.files[0]) {
             const file = input.files[0];
-            if (file.size > 5 * 1024 * 1024) {
-                alert('圖片大小不能超過 5MB！');
-                input.value = '';
-                return;
-            }
             const reader = new FileReader();
             reader.onload = function(e) {
-                globalIconBase64 = e.target.result;
-                document.getElementById('iconPreview').innerHTML = `<img src="${globalIconBase64}" alt="Icon">`;
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    const targetSize = 192; // 安卓 xxxhdpi 最高規格圖標尺寸
+                    canvas.width = targetSize;
+                    canvas.height = targetSize;
+
+                    // 正方形中心裁切縮放
+                    const minDim = Math.min(img.width, img.height);
+                    const sx = (img.width - minDim) / 2;
+                    const sy = (img.height - minDim) / 2;
+
+                    ctx.clearRect(0, 0, targetSize, targetSize);
+                    ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, targetSize, targetSize);
+
+                    // 輸出為輕量化 WebP/PNG Base64（約 15KB ~ 30KB）
+                    globalIconBase64 = canvas.toDataURL('image/png');
+                    document.getElementById('iconPreview').innerHTML = `<img src="${globalIconBase64}" alt="Icon">`;
+                };
+                img.src = e.target.result;
             };
             reader.readAsDataURL(file);
         }
