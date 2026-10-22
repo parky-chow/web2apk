@@ -42,7 +42,6 @@
         .progress-fill { height: 100%; width: 5%; background: var(--primary); transition: width 0.5s ease; }
         .step-list { font-size: 13px; color: #475569; margin: 10px 0 0 0; padding-left: 18px; line-height: 1.7; }
         .download-btn { display: none; width: 100%; text-align: center; padding: 13px; background: var(--success); color: #fff; border: none; border-radius: 8px; font-weight: 600; margin-top: 14px; box-sizing: border-box; cursor: pointer; font-size: 15px; }
-        .delete-btn { display: none; width: 100%; text-align: center; padding: 10px; background: #64748b; color: #fff; border: none; border-radius: 8px; font-size: 13px; margin-top: 8px; cursor: pointer; }
         details { margin-bottom: 18px; background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
         summary { font-size: 13px; font-weight: 600; cursor: pointer; color: #475569; }
         .hint { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.4; }
@@ -84,7 +83,7 @@
     let currentReleaseId = null;
     let currentTagName = null;
     let targetAssetId = null;
-    let targetFileName = 'app.apk';
+    let customDownloadFileName = 'app.apk';
 
     function renderMainApp() {
         document.title = 'Web轉APK 雲端線上打包平台';
@@ -93,7 +92,7 @@
         root.innerHTML = `
         <div class="container">
             <h2>📱 網頁轉 APK 雲端線上打包台</h2>
-            <p class="desc">輸入目標網址、應用名稱與上傳圖標，編譯完成後點擊按鈕即可下載安裝包。</p>
+            <p class="desc">輸入目標網址、應用名稱與上傳圖標，點擊下載後將自動銷毀雲端記錄。</p>
 
             <details id="config-panel">
                 <summary>⚙️ 首次使用配置 (GitHub 倉庫與 Token，自動保存在本地瀏覽器)</summary>
@@ -122,7 +121,7 @@
                     <div class="icon-preview" id="iconPreview">預覽</div>
                     <div style="flex: 1;">
                         <input type="file" id="iconFile" accept="image/png, image/jpeg" onchange="handleIconUpload(this)">
-                        <div class="hint">支持任意大小 PNG / JPG 圖片，不上傳則使用默認圖標。</div>
+                        <div class="hint">支持任意大小 PNG / JPG 圖片，不上傳則使用安卓默認圖標。</div>
                     </div>
                 </div>
             </div>
@@ -143,15 +142,18 @@
                 </div>
             </div>
 
+            <div class="form-group">
+                <label>💾 下載保存的文件名 (可選自定義)</label>
+                <input type="text" class="form-input" id="customFileName" placeholder="例如：我的商城_v1.0.apk (留空則自動使用應用名稱)">
+            </div>
+
             <button id="buildBtn" class="btn" onclick="startBuild()">🚀 開始雲端編譯 APK</button>
 
             <div id="statusCard" class="status-card">
                 <div id="statusTitle" style="font-weight: 600; font-size: 14px;">正在請求雲端構建服務器...</div>
                 <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
                 <ul id="stepList" class="step-list"></ul>
-                <!-- 核心修復：改用 API 授權流下載，徹底杜絕私有倉庫或未登入跳轉 404 -->
-                <button id="downloadBtn" class="download-btn" onclick="downloadViaTokenBlob()">⬇️ 立即下載編譯好的 APK</button>
-                <button id="cleanBtn" class="delete-btn" onclick="cleanCloudRecords()">🧹 下載完成後點此銷毀雲端記錄（不留痕跡）</button>
+                <button id="downloadBtn" class="download-btn" onclick="downloadAndAutoDestroy()">⬇️ 立即下載編譯好的 APK (下載後自動銷毀雲端記錄)</button>
             </div>
         </div>`;
 
@@ -206,6 +208,14 @@
         const targetUrl = document.getElementById('targetUrl').value.trim();
         const appName = document.getElementById('appName').value.trim();
         const appSuffix = document.getElementById('appSuffix').value.trim() || 'webtoapk';
+        
+        let customName = document.getElementById('customFileName').value.trim();
+        if (!customName) {
+            customName = (appName || 'app') + '.apk';
+        } else if (!customName.toLowerCase().endsWith('.apk')) {
+            customName += '.apk';
+        }
+        customDownloadFileName = customName;
 
         if (!owner || !repo || !token) {
             alert('請先展開頂部【首次使用配置】，填寫 GitHub 用戶名、倉庫名和 Token！');
@@ -227,12 +237,10 @@
         const progressFill = document.getElementById('progressFill');
         const stepList = document.getElementById('stepList');
         const downloadBtn = document.getElementById('downloadBtn');
-        const cleanBtn = document.getElementById('cleanBtn');
 
         btn.disabled = true;
         statusCard.style.display = 'block';
         downloadBtn.style.display = 'none';
-        cleanBtn.style.display = 'none';
         stepList.innerHTML = '';
         progressFill.style.width = '5%';
 
@@ -361,7 +369,7 @@
                         if (job.conclusion === 'success') {
                             progressFill.style.width = '100%';
                             statusTitle.innerText = '🎉 編譯成功！正在校驗 APK 下載資源...';
-                            await fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn, cleanBtn);
+                            await fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn);
                         } else {
                             statusTitle.innerText = `❌ 編譯失敗 (${job.conclusion})，請前往倉庫查看詳細日誌`;
                         }
@@ -376,7 +384,7 @@
         }
     }
 
-    async function fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn, cleanBtn) {
+    async function fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn) {
         currentTagName = `build-${runNumber}`;
         for (let i = 0; i < 8; i++) {
             const relRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${currentTagName}`, token);
@@ -386,11 +394,9 @@
                 const asset = relData.assets && relData.assets[0];
                 if (asset && asset.id) {
                     targetAssetId = asset.id;
-                    targetFileName = asset.name || 'app-release.apk';
-                    downloadBtn.innerText = `⬇️ 立即下載 ${targetFileName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
+                    downloadBtn.innerText = `⬇️ 立即下載 ${customDownloadFileName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
                     downloadBtn.style.display = 'block';
-                    cleanBtn.style.display = 'block';
-                    statusTitle.innerText = '✅ APK 生成完畢，請點擊下方綠色按鈕下載！';
+                    statusTitle.innerText = '✅ APK 生成完畢，點擊按鈕即可下載並自動銷毀雲端記錄！';
                     return;
                 }
             }
@@ -399,8 +405,7 @@
         statusTitle.innerText = '⚠️ 獲取下載鏈接超時，請前往倉庫 Releases 查看';
     }
 
-    // 核心修復：使用 Token 鑑權請求 GitHub API，以二進制 Blob 流直接觸發本地下載（徹底杜絕 404）
-    async function downloadViaTokenBlob() {
+    async function downloadAndAutoDestroy() {
         const owner = document.getElementById('owner').value.trim();
         const repo = document.getElementById('repo').value.trim();
         const token = document.getElementById('token').value.trim();
@@ -412,12 +417,11 @@
             return;
         }
 
-        const originalText = downloadBtn.innerText;
         downloadBtn.disabled = true;
-        downloadBtn.innerText = '⏳ 正在請求安全下載數據流...';
+        downloadBtn.innerText = '⏳ 正在傳輸安裝包數據流...';
+        statusTitle.innerText = '📥 正透過加密數據流傳輸 APK 至本地...';
 
         try {
-            // 透過 asset API 攜帶 Token 授權獲取二進制數據
             const assetUrl = `https://api.github.com/repos/${owner}/${repo}/releases/assets/${targetAssetId}`;
             const res = await fetch(assetUrl, {
                 headers: {
@@ -433,51 +437,38 @@
             const blob = await res.blob();
             const blobUrl = window.URL.createObjectURL(blob);
             
-            // 觸發本地安全下載
             const tempA = document.createElement('a');
             tempA.href = blobUrl;
-            tempA.download = targetFileName;
+            tempA.download = customDownloadFileName;
             document.body.appendChild(tempA);
             tempA.click();
             document.body.removeChild(tempA);
             window.URL.revokeObjectURL(blobUrl);
 
-            downloadBtn.innerText = '✅ 下載已啟動！';
-            statusTitle.innerText = '🎉 安裝包已開始下載到本地。如需清理記錄，請點擊下方按鈕。';
+            downloadBtn.innerText = '✅ 下載成功！正在後台自動銷毀雲端記錄...';
+            statusTitle.innerText = '🧹 安裝包已安全存入本地，正在自動清理雲端記錄...';
+
+            if (currentReleaseId) {
+                try {
+                    await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/${currentReleaseId}`, token, { method: 'DELETE' });
+                } catch(e) {}
+            }
+            if (currentTagName) {
+                try {
+                    await ghFetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/tags/${currentTagName}`, token, { method: 'DELETE' });
+                } catch(e) {}
+            }
+
+            setTimeout(() => {
+                downloadBtn.innerText = '✨ 下載完成，雲端痕跡已徹底銷毀！';
+                statusTitle.innerText = '🎉 所有任務已完成，雲端無任何殘留。';
+            }, 1500);
+
         } catch (e) {
             alert('下載出錯: ' + e.message);
-            downloadBtn.innerText = originalText;
-        } finally {
             downloadBtn.disabled = false;
+            downloadBtn.innerText = '重試下載';
         }
-    }
-
-    async function cleanCloudRecords() {
-        const owner = document.getElementById('owner').value.trim();
-        const repo = document.getElementById('repo').value.trim();
-        const token = document.getElementById('token').value.trim();
-        const statusTitle = document.getElementById('statusTitle');
-        const cleanBtn = document.getElementById('cleanBtn');
-
-        cleanBtn.disabled = true;
-        statusTitle.innerText = '🧹 正在銷毀雲端 Release 與標籤記錄...';
-
-        if (currentReleaseId) {
-            try {
-                await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/${currentReleaseId}`, token, { method: 'DELETE' });
-            } catch (e) {}
-        }
-
-        if (currentTagName) {
-            try {
-                await ghFetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/tags/${currentTagName}`, token, { method: 'DELETE' });
-            } catch (e) {}
-        }
-
-        setTimeout(() => {
-            statusTitle.innerText = '✨ 雲端 Release 與安裝包已全部銷毀，痕跡已清除！';
-            cleanBtn.innerText = '✅ 雲端記錄已銷毀';
-        }, 1200);
     }
 </script>
 </body>
