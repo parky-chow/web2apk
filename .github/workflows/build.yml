@@ -19,6 +19,10 @@ on:
         description: '是否有自定義圖標'
         required: false
         default: 'false'
+      custom_file_name:
+        description: '自定義下載APK文件名'
+        required: false
+        default: ''
 
 permissions:
   contents: write
