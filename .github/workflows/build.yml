@@ -19,10 +19,6 @@ on:
         description: '是否有自定義圖標'
         required: false
         default: 'false'
-      custom_file_name:
-        description: '自定義下載APK文件名'
-        required: false
-        default: ''
 
 permissions:
   contents: write
@@ -37,7 +33,7 @@ jobs:
       - name: 2. 安裝 Python 圖像處理庫 Pillow
         run: pip install Pillow
 
-      - name: 3. 動態寫入配置與圖標強制覆蓋
+      - name: 3. 動態寫入配置與圖標處理
         env:
           TARGET_URL: ${{ github.event.inputs.target_url }}
           APP_NAME: ${{ github.event.inputs.app_name }}
@@ -53,10 +49,7 @@ jobs:
           suffix = re.sub(r"[^a-zA-Z0-9]", "", os.environ.get("APP_SUFFIX") or "webtoapk").lower() or "webtoapk"
           has_icon = os.environ.get("HAS_ICON") == "true"
 
-          manifest_path = "app/src/main/AndroidManifest.xml"
-          with open(manifest_path, "r", encoding="utf-8") as f:
-              m_content = f.read()
-
+          # 1. 處理自定義圖標
           icon_temp_path = "temp_icon.png"
           if has_icon and os.path.exists(icon_temp_path):
               try:
@@ -72,10 +65,7 @@ jobs:
                       "mipmap-xhdpi": 96,
                       "mipmap-xxhdpi": 144,
                       "mipmap-xxxhdpi": 192,
-                      "drawable": 192,
-                      "drawable-xhdpi": 96,
-                      "drawable-xxhdpi": 144,
-                      "drawable-xxxhdpi": 192
+                      "drawable": 192
                   }
                   for folder, size in sizes.items():
                       dir_path = f"app/src/main/res/{folder}"
@@ -87,31 +77,34 @@ jobs:
                   anydpi_path = "app/src/main/res/mipmap-anydpi-v26"
                   if os.path.exists(anydpi_path):
                       shutil.rmtree(anydpi_path)
-
                   os.remove(icon_temp_path)
               except Exception as e:
-                  print(f"圖標處理異常: {e}")
+                  print("圖標處理警告:", e)
 
-              m_content = re.sub(r"android:icon=\".*?\"", "android:icon=\"@mipmap/ic_launcher\"", m_content)
-              m_content = re.sub(r"android:roundIcon=\".*?\"", "android:roundIcon=\"@mipmap/ic_launcher_round\"", m_content)
-              if "android:icon=" not in m_content:
-                  m_content = m_content.replace("<application", "<application android:icon=\"@mipmap/ic_launcher\" android:roundIcon=\"@mipmap/ic_launcher_round\"")
-
-          m_content = re.sub(r"android:label=\".*?\"", f"android:label=\"{name}\"", m_content)
+          # 2. 安全替換 AndroidManifest.xml
+          manifest_path = "app/src/main/AndroidManifest.xml"
+          with open(manifest_path, "r", encoding="utf-8") as f:
+              m = f.read()
+          m = re.sub(r"android:label=\"[^\"]*\"", f"android:label=\"{name}\"", m)
+          if has_icon:
+              m = re.sub(r"android:icon=\"[^\"]*\"", "android:icon=\"@mipmap/ic_launcher\"", m)
+              m = re.sub(r"android:roundIcon=\"[^\"]*\"", "android:roundIcon=\"@mipmap/ic_launcher_round\"", m)
           with open(manifest_path, "w", encoding="utf-8") as f:
-              f.write(m_content)
+              f.write(m)
 
+          # 3. 替換 MainActivity.java
           java_path = "app/src/main/java/com/example/webtoapk/MainActivity.java"
           with open(java_path, "r", encoding="utf-8") as f:
               c = f.read()
-          c = re.sub(r"private static final String TARGET_URL = \".*?\";", f"private static final String TARGET_URL = \"{url}\";", c)
+          c = re.sub(r"private static final String TARGET_URL = \"[^\"]*\";", f"private static final String TARGET_URL = \"{url}\";", c)
           with open(java_path, "w", encoding="utf-8") as f:
               f.write(c)
 
+          # 4. 替換 app/build.gradle
           gradle_path = "app/build.gradle"
           with open(gradle_path, "r", encoding="utf-8") as f:
               c = f.read()
-          c = re.sub(r"applicationId \"com\.example\..*?\"", f"applicationId \"com.example.{suffix}\"", c)
+          c = re.sub(r"applicationId \"[^\"]*\"", f"applicationId \"com.example.{suffix}\"", c)
           with open(gradle_path, "w", encoding="utf-8") as f:
               f.write(c)
           '
@@ -127,39 +120,15 @@ jobs:
         with:
           gradle-version: '8.5'
 
-      - name: 6. 編譯並重命名 APK
-        id: build_apk
-        env:
-          APP_NAME: ${{ github.event.inputs.app_name }}
-          CUSTOM_NAME: ${{ github.event.inputs.custom_file_name }}
+      - name: 6. 編譯生成 APK
         run: |
           gradle assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk ./app-release.apk
 
-          cat << 'EOF' > rename_apk.py
-          import os, re, shutil
-
-          app_name = os.environ.get("APP_NAME", "").strip() or "app"
-          custom = os.environ.get("CUSTOM_NAME", "").strip()
-          target_filename = custom if custom else f"{app_name}.apk"
-          if not target_filename.lower().endsWith(".apk"):
-              target_filename += ".apk"
-
-          target_filename = re.sub(r'[\\/*?:"<>|]', '_', target_filename)
-
-          src = "app/build/outputs/apk/debug/app-debug.apk"
-          dst = os.path.join(".", target_filename)
-          shutil.copyfile(src, dst)
-
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
-              f.write(f"TARGET_APK={target_filename}\\n")
-          EOF
-
-          python3 rename_apk.py
-
-      - name: 7. 發布到 Releases 生成下載附件
+      - name: 7. 發布到 Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: "${{ github.event.inputs.app_name || 'App' }} (構建 #${{ github.run_number }})"
           body: "目標網址: ${{ github.event.inputs.target_url }}"
-          files: ./${{ env.TARGET_APK }}
+          files: ./app-release.apk
