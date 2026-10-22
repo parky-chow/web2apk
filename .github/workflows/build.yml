@@ -33,7 +33,7 @@ jobs:
       - name: 2. 安裝 Python 圖像處理庫 Pillow
         run: pip install Pillow
 
-      - name: 3. 動態寫入配置與處理圖標
+      - name: 3. 動態寫入配置與圖標強制覆蓋
         env:
           TARGET_URL: ${{ github.event.inputs.target_url }}
           APP_NAME: ${{ github.event.inputs.app_name }}
@@ -41,7 +41,7 @@ jobs:
           HAS_ICON: ${{ github.event.inputs.has_custom_icon }}
         run: |
           python3 -c '
-          import os, re
+          import os, re, shutil
           from PIL import Image
 
           url = os.environ.get("TARGET_URL") or "https://www.bing.com"
@@ -49,6 +49,11 @@ jobs:
           suffix = re.sub(r"[^a-zA-Z0-9]", "", os.environ.get("APP_SUFFIX") or "webtoapk").lower() or "webtoapk"
           has_icon = os.environ.get("HAS_ICON") == "true"
 
+          manifest_path = "app/src/main/AndroidManifest.xml"
+          with open(manifest_path, "r", encoding="utf-8") as f:
+              m_content = f.read()
+
+          # 1. 處理自定義圖標（全面覆蓋 mipmap 與 drawable，並強制修改 Manifest 引用）
           icon_temp_path = "temp_icon.png"
           if has_icon and os.path.exists(icon_temp_path):
               try:
@@ -63,7 +68,11 @@ jobs:
                       "mipmap-hdpi": 72,
                       "mipmap-xhdpi": 96,
                       "mipmap-xxhdpi": 144,
-                      "mipmap-xxxhdpi": 192
+                      "mipmap-xxxhdpi": 192,
+                      "drawable": 192,
+                      "drawable-xhdpi": 96,
+                      "drawable-xxhdpi": 144,
+                      "drawable-xxxhdpi": 192
                   }
                   for folder, size in sizes.items():
                       dir_path = f"app/src/main/res/{folder}"
@@ -71,11 +80,29 @@ jobs:
                       resized = img.resize((size, size), Image.Resampling.LANCZOS)
                       resized.save(os.path.join(dir_path, "ic_launcher.png"))
                       resized.save(os.path.join(dir_path, "ic_launcher_round.png"))
-                  print("✅ 成功處理自定義圖標！")
+
+                  # 移除可能存在的 XML 向量適配圖標（避免覆蓋 PNG）
+                  anydpi_path = "app/src/main/res/mipmap-anydpi-v26"
+                  if os.path.exists(anydpi_path):
+                      shutil.rmtree(anydpi_path)
+
+                  print("✅ 成功處理並覆蓋所有目錄圖標！")
                   os.remove(icon_temp_path)
               except Exception as e:
                   print(f"⚠️ 圖標轉換失敗: {e}")
 
+              # 強制替換 AndroidManifest 中的圖標指向
+              m_content = re.sub(r"android:icon=\".*?\"", "android:icon=\"@mipmap/ic_launcher\"", m_content)
+              m_content = re.sub(r"android:roundIcon=\".*?\"", "android:roundIcon=\"@mipmap/ic_launcher_round\"", m_content)
+              if "android:icon=" not in m_content:
+                  m_content = m_content.replace("<application", "<application android:icon=\"@mipmap/ic_launcher\" android:roundIcon=\"@mipmap/ic_launcher_round\"")
+
+          # 2. 替換 AndroidManifest.xml 中的應用名稱
+          m_content = re.sub(r"android:label=\".*?\"", f"android:label=\"{name}\"", m_content)
+          with open(manifest_path, "w", encoding="utf-8") as f:
+              f.write(m_content)
+
+          # 3. 替換 MainActivity.java 中的網址
           java_path = "app/src/main/java/com/example/webtoapk/MainActivity.java"
           with open(java_path, "r", encoding="utf-8") as f:
               c = f.read()
@@ -83,13 +110,7 @@ jobs:
           with open(java_path, "w", encoding="utf-8") as f:
               f.write(c)
 
-          manifest_path = "app/src/main/AndroidManifest.xml"
-          with open(manifest_path, "r", encoding="utf-8") as f:
-              c = f.read()
-          c = re.sub(r"android:label=\".*?\"", f"android:label=\"{name}\"", c)
-          with open(manifest_path, "w", encoding="utf-8") as f:
-              f.write(c)
-
+          # 4. 替換 app/build.gradle 中的 applicationId
           gradle_path = "app/build.gradle"
           with open(gradle_path, "r", encoding="utf-8") as f:
               c = f.read()
