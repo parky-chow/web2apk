@@ -41,7 +41,7 @@
         .progress-bar { width: 100%; height: 10px; background: #e2e8f0; border-radius: 99px; overflow: hidden; margin: 12px 0; }
         .progress-fill { height: 100%; width: 5%; background: var(--primary); transition: width 0.5s ease; }
         .step-list { font-size: 13px; color: #475569; margin: 10px 0 0 0; padding-left: 18px; line-height: 1.7; }
-        .download-btn { display: none; width: 100%; text-align: center; padding: 13px; background: var(--success); color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; margin-top: 14px; box-sizing: border-box; cursor: pointer; }
+        .download-btn { display: none; width: 100%; text-align: center; padding: 13px; background: var(--success); color: #fff; border: none; border-radius: 8px; font-weight: 600; margin-top: 14px; box-sizing: border-box; cursor: pointer; font-size: 15px; }
         .delete-btn { display: none; width: 100%; text-align: center; padding: 10px; background: #64748b; color: #fff; border: none; border-radius: 8px; font-size: 13px; margin-top: 8px; cursor: pointer; }
         details { margin-bottom: 18px; background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
         summary { font-size: 13px; font-weight: 600; cursor: pointer; color: #475569; }
@@ -83,6 +83,8 @@
     let globalPureBase64 = '';
     let currentReleaseId = null;
     let currentTagName = null;
+    let targetAssetId = null;
+    let targetFileName = 'app.apk';
 
     function renderMainApp() {
         document.title = 'Web轉APK 雲端線上打包平台';
@@ -147,8 +149,8 @@
                 <div id="statusTitle" style="font-weight: 600; font-size: 14px;">正在請求雲端構建服務器...</div>
                 <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
                 <ul id="stepList" class="step-list"></ul>
-                <!-- 下載直鏈：使用標準原生 <a> 標籤，不綁定即時刪除，避免下載未完成就被伺服器銷毀 -->
-                <a id="downloadBtn" class="download-btn" href="#" target="_blank" rel="noopener noreferrer">⬇️ 立即下載編譯好的 APK</a>
+                <!-- 核心修復：改用 API 授權流下載，徹底杜絕私有倉庫或未登入跳轉 404 -->
+                <button id="downloadBtn" class="download-btn" onclick="downloadViaTokenBlob()">⬇️ 立即下載編譯好的 APK</button>
                 <button id="cleanBtn" class="delete-btn" onclick="cleanCloudRecords()">🧹 下載完成後點此銷毀雲端記錄（不留痕跡）</button>
             </div>
         </div>`;
@@ -358,7 +360,7 @@
                     if (job.status === 'completed') {
                         if (job.conclusion === 'success') {
                             progressFill.style.width = '100%';
-                            statusTitle.innerText = '🎉 編譯成功！正在獲取 APK 下載直鏈...';
+                            statusTitle.innerText = '🎉 編譯成功！正在校驗 APK 下載資源...';
                             await fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn, cleanBtn);
                         } else {
                             statusTitle.innerText = `❌ 編譯失敗 (${job.conclusion})，請前往倉庫查看詳細日誌`;
@@ -382,10 +384,10 @@
                 const relData = await relRes.json();
                 currentReleaseId = relData.id;
                 const asset = relData.assets && relData.assets[0];
-                if (asset && asset.browser_download_url) {
-                    // 使用原生標準下載連結
-                    downloadBtn.href = asset.browser_download_url;
-                    downloadBtn.innerText = `⬇️ 立即下載 ${asset.name} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
+                if (asset && asset.id) {
+                    targetAssetId = asset.id;
+                    targetFileName = asset.name || 'app-release.apk';
+                    downloadBtn.innerText = `⬇️ 立即下載 ${targetFileName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
                     downloadBtn.style.display = 'block';
                     cleanBtn.style.display = 'block';
                     statusTitle.innerText = '✅ APK 生成完畢，請點擊下方綠色按鈕下載！';
@@ -395,6 +397,59 @@
             await new Promise(r => setTimeout(r, 2500));
         }
         statusTitle.innerText = '⚠️ 獲取下載鏈接超時，請前往倉庫 Releases 查看';
+    }
+
+    // 核心修復：使用 Token 鑑權請求 GitHub API，以二進制 Blob 流直接觸發本地下載（徹底杜絕 404）
+    async function downloadViaTokenBlob() {
+        const owner = document.getElementById('owner').value.trim();
+        const repo = document.getElementById('repo').value.trim();
+        const token = document.getElementById('token').value.trim();
+        const downloadBtn = document.getElementById('downloadBtn');
+        const statusTitle = document.getElementById('statusTitle');
+
+        if (!targetAssetId) {
+            alert('未檢測到可用的下載資源');
+            return;
+        }
+
+        const originalText = downloadBtn.innerText;
+        downloadBtn.disabled = true;
+        downloadBtn.innerText = '⏳ 正在請求安全下載數據流...';
+
+        try {
+            // 透過 asset API 攜帶 Token 授權獲取二進制數據
+            const assetUrl = `https://api.github.com/repos/${owner}/${repo}/releases/assets/${targetAssetId}`;
+            const res = await fetch(assetUrl, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/octet-stream'
+                }
+            });
+
+            if (!res.ok) {
+                throw new Error(`獲取文件失敗 (${res.status})，請確認 Token 權限`);
+            }
+
+            const blob = await res.blob();
+            const blobUrl = window.URL.createObjectURL(blob);
+            
+            // 觸發本地安全下載
+            const tempA = document.createElement('a');
+            tempA.href = blobUrl;
+            tempA.download = targetFileName;
+            document.body.appendChild(tempA);
+            tempA.click();
+            document.body.removeChild(tempA);
+            window.URL.revokeObjectURL(blobUrl);
+
+            downloadBtn.innerText = '✅ 下載已啟動！';
+            statusTitle.innerText = '🎉 安裝包已開始下載到本地。如需清理記錄，請點擊下方按鈕。';
+        } catch (e) {
+            alert('下載出錯: ' + e.message);
+            downloadBtn.innerText = originalText;
+        } finally {
+            downloadBtn.disabled = false;
+        }
     }
 
     async function cleanCloudRecords() {
