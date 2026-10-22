@@ -279,7 +279,6 @@
             statusTitle.innerText = '⏳ 正在向 GitHub 發送構建指令...';
             progressFill.style.width = '15%';
 
-            // 嚴格僅傳遞 target_url, app_name, app_id_suffix, has_custom_icon 這 4 個聲明參數
             const dispatchRes = await ghFetch(
                 `https://api.github.com/repos/${owner}/${repo}/actions/workflows/build.yml/dispatches`,
                 token,
