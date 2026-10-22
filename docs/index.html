@@ -8,7 +8,6 @@
         :root { --primary: #2563eb; --success: #10b981; --bg: #f8fafc; --card: #ffffff; }
         body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: #1e293b; margin: 0; padding: 30px 15px; display: flex; justify-content: center; align-items: center; min-height: 85vh; box-sizing: border-box; }
         
-        /* 纯净无提示密码验证框样式 */
         .auth-box { width: 100%; max-width: 300px; background: var(--card); border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.06); padding: 24px; box-sizing: border-box; }
         .auth-box input { width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 16px; text-align: center; letter-spacing: 3px; box-sizing: border-box; outline: none; transition: border-color 0.2s; }
         .auth-box input:focus { border-color: var(--primary); }
@@ -21,7 +20,6 @@
             75% { transform: translateX(6px); }
         }
 
-        /* 主界面样式（验证通过后才动态载入） */
         .container { width: 100%; max-width: 540px; background: var(--card); border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.06); padding: 28px; box-sizing: border-box; }
         h2 { margin-top: 0; font-size: 22px; display: flex; align-items: center; gap: 8px; }
         .desc { font-size: 13px; color: #64748b; margin-bottom: 22px; }
@@ -31,13 +29,18 @@
         input.form-input:focus { border-color: var(--primary); }
         .row { display: flex; gap: 12px; }
         .row .form-group { flex: 1; }
+        
+        .icon-upload-row { display: flex; align-items: center; gap: 15px; margin-bottom: 16px; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; }
+        .icon-preview { width: 50px; height: 50px; border-radius: 10px; background: #e2e8f0; display: flex; align-items: center; justify-content: center; overflow: hidden; font-size: 12px; color: #64748b; border: 1px solid #cbd5e1; flex-shrink: 0; }
+        .icon-preview img { width: 100%; height: 100%; object-fit: cover; }
+        
         .btn { width: 100%; padding: 12px; background: var(--primary); color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; margin-top: 8px; }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
         .status-card { display: none; margin-top: 22px; padding: 18px; border-radius: 12px; background: #f1f5f9; border: 1px solid #e2e8f0; }
         .progress-bar { width: 100%; height: 10px; background: #e2e8f0; border-radius: 99px; overflow: hidden; margin: 12px 0; }
         .progress-fill { height: 100%; width: 5%; background: var(--primary); transition: width 0.5s ease; }
         .step-list { font-size: 13px; color: #475569; margin: 10px 0 0 0; padding-left: 18px; line-height: 1.7; }
-        .download-btn { display: none; width: 100%; text-align: center; padding: 13px; background: var(--success); color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; margin-top: 14px; box-sizing: border-box; }
+        .download-btn { display: none; width: 100%; text-align: center; padding: 13px; background: var(--success); color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; margin-top: 14px; box-sizing: border-box; cursor: pointer; }
         details { margin-bottom: 18px; background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
         summary { font-size: 13px; font-weight: 600; cursor: pointer; color: #475569; }
         .hint { font-size: 12px; color: #64748b; margin-top: 4px; }
@@ -45,7 +48,6 @@
 </head>
 <body>
 
-<!-- 初始仅渲染无任何提示的密码框 -->
 <div id="appRoot" style="width: 100%; display: flex; justify-content: center;">
     <div class="auth-box">
         <input type="password" id="pwdInput" autocomplete="off" autofocus onkeydown="if(event.key==='Enter') verifyAccess()">
@@ -54,7 +56,6 @@
 </div>
 
 <script>
-    // 获取当前系统日期 8 位字符串 (YYYYMMDD)
     function getTodayCode() {
         const now = new Date();
         const y = now.getFullYear();
@@ -63,7 +64,6 @@
         return `${y}${m}${d}`;
     }
 
-    // 验证密码并动态挂载网页内容
     function verifyAccess() {
         const inputEl = document.getElementById('pwdInput');
         if (!inputEl) return;
@@ -72,70 +72,101 @@
             renderMainApp();
         } else {
             inputEl.classList.remove('error');
-            void inputEl.offsetWidth; // 触发抖动重绘
+            void inputEl.offsetWidth;
             inputEl.classList.add('error');
             inputEl.value = '';
         }
     }
 
-    // 仅在验证通过后才将主界面注入 DOM
+    let globalIconBase64 = '';
+    let currentReleaseId = null;
+    let currentTagName = null;
+
     function renderMainApp() {
-        document.title = 'Web转APK 云端在线打包平台';
+        document.title = 'Web轉APK 雲端線上打包平台';
         document.body.style.alignItems = 'flex-start';
         const root = document.getElementById('appRoot');
         root.innerHTML = `
         <div class="container">
-            <h2>📱 网页转 APK 在线生成台</h2>
-            <p class="desc">输入目标网址与应用名称，由 GitHub Actions 云端实时编译并生成安卓安装包。</p>
+            <h2>📱 網頁轉 APK 雲端線上打包台</h2>
+            <p class="desc">輸入目標網址、應用名稱與上傳圖標，編譯完成下載後將自動清理雲端記錄。</p>
 
             <details id="config-panel">
-                <summary>⚙️ 首次使用配置 (GitHub 仓库与 Token，自动保存在本地浏览器)</summary>
+                <summary>⚙️ 首次使用配置 (GitHub 倉庫與 Token，自動保存在本地瀏覽器)</summary>
                 <div style="margin-top: 12px;">
                     <div class="row">
                         <div class="form-group">
-                            <label>GitHub 用户名</label>
+                            <label>GitHub 用戶名</label>
                             <input type="text" class="form-input" id="owner" placeholder="例如: zhangsan">
                         </div>
                         <div class="form-group">
-                            <label>仓库名称 (Repo)</label>
+                            <label>倉庫名稱 (Repo)</label>
                             <input type="text" class="form-input" id="repo" placeholder="例如: my-web-apk">
                         </div>
                     </div>
                     <div class="form-group" style="margin-bottom:0;">
-                        <label>GitHub Personal Access Token (需勾选 workflow 权限)</label>
+                        <label>GitHub Personal Access Token (需勾選 workflow 與 repo 權限)</label>
                         <input type="password" class="form-input" id="token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
-                        <div class="hint">Token 仅保存在你当前浏览器的 localStorage 中，用于触发编译接口。</div>
+                        <div class="hint">Token 僅保存在你當前瀏覽器的 localStorage 中。</div>
                     </div>
                 </div>
             </details>
 
             <div class="form-group">
-                <label>🌐 目标网站地址 (必填，需带 http:// 或 https://)</label>
+                <label>🖼️ App 桌面圖標 (建議上傳正方形 PNG 圖片)</label>
+                <div class="icon-upload-row">
+                    <div class="icon-preview" id="iconPreview">預覽</div>
+                    <div style="flex: 1;">
+                        <input type="file" id="iconFile" accept="image/png, image/jpeg" onchange="handleIconUpload(this)" style="font-size: 13px;">
+                        <div class="hint">支持 PNG / JPG 格式，建議 512x512 像素以上，大小不超過 5MB。不上傳則使用默認圖標。</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>🌐 目標網站地址 (必填，需帶 http:// 或 https://)</label>
                 <input type="url" class="form-input" id="targetUrl" placeholder="https://www.example.com" value="https://www.bing.com">
             </div>
 
             <div class="row">
                 <div class="form-group">
-                    <label>🏷️ 手机桌面显示的 App 名称</label>
-                    <input type="text" class="form-input" id="appName" placeholder="例如：我的商城" value="我的应用">
+                    <label>🏷️ 手機桌面顯示的 App 名稱</label>
+                    <input type="text" class="form-input" id="appName" placeholder="例如：我的商城" value="我的應用">
                 </div>
                 <div class="form-group">
-                    <label>📦 唯一英文标识 (防覆盖安装)</label>
-                    <input type="text" class="form-input" id="appSuffix" placeholder="纯字母，如 shopapp" value="myapp01">
+                    <label>📦 唯一英文標識 (防覆蓋安裝)</label>
+                    <input type="text" class="form-input" id="appSuffix" placeholder="純字母，如 shopapp" value="myapp01">
                 </div>
             </div>
 
-            <button id="buildBtn" class="btn" onclick="startBuild()">🚀 开始云端编译 APK</button>
+            <button id="buildBtn" class="btn" onclick="startBuild()">🚀 開始雲端編譯 APK</button>
 
             <div id="statusCard" class="status-card">
-                <div id="statusTitle" style="font-weight: 600; font-size: 14px;">正在请求云端构建服务器...</div>
+                <div id="statusTitle" style="font-weight: 600; font-size: 14px;">正在請求雲端構建服務器...</div>
                 <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
                 <ul id="stepList" class="step-list"></ul>
-                <a id="downloadBtn" class="download-btn" href="#" target="_blank">⬇️ 立即下载编译好的 APK</a>
+                <a id="downloadBtn" class="download-btn" onclick="triggerDownloadAndClean()">⬇️ 立即下載編譯好的 APK (下載後自動銷毀雲端文件)</a>
             </div>
         </div>`;
 
         initSavedConfig();
+    }
+
+    function handleIconUpload(input) {
+        if (input.files && input.files[0]) {
+            const file = input.files[0];
+            if (file.size > 5 * 1024 * 1024) {
+                alert('圖片大小不能超過 5MB！');
+                input.value = '';
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                globalIconBase64 = e.target.result;
+                document.getElementById('iconPreview').innerHTML = `<img src="${globalIconBase64}" alt="Icon">`;
+            };
+            reader.readAsDataURL(file);
+        }
     }
 
     function initSavedConfig() {
@@ -175,12 +206,12 @@
         const appSuffix = document.getElementById('appSuffix').value.trim() || 'webtoapk';
 
         if (!owner || !repo || !token) {
-            alert('请先展开顶部【首次使用配置】，填写 GitHub 用户名、仓库名和 Token！');
+            alert('請先展開頂部【首次使用配置】，填寫 GitHub 用戶名、倉庫名和 Token！');
             document.getElementById('config-panel').open = true;
             return;
         }
         if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-            alert('网址必须以 http:// 或 https:// 开头！');
+            alert('網址必須以 http:// 或 https:// 開頭！');
             return;
         }
 
@@ -200,11 +231,11 @@
         downloadBtn.style.display = 'none';
         stepList.innerHTML = '';
         progressFill.style.width = '8%';
-        statusTitle.innerText = '⏳ 正在向 GitHub 发送构建指令...';
+        statusTitle.innerText = '⏳ 正在向 GitHub 發送構建指令...';
 
         try {
             const repoRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}`, token);
-            if (!repoRes.ok) throw new Error('无法访问仓库，请检查用户名、仓库名或 Token 是否正确');
+            if (!repoRes.ok) throw new Error('無法訪問倉庫，請檢查用戶名、倉庫名或 Token 是否正確');
             const repoData = await repoRes.json();
             const defaultBranch = repoData.default_branch || 'main';
 
@@ -220,7 +251,8 @@
                         inputs: {
                             target_url: targetUrl,
                             app_name: appName,
-                            app_id_suffix: appSuffix
+                            app_id_suffix: appSuffix,
+                            icon_base64: globalIconBase64
                         }
                     })
                 }
@@ -228,10 +260,10 @@
 
             if (!dispatchRes.ok) {
                 const errText = await dispatchRes.text();
-                throw new Error(`触发编译失败 (${dispatchRes.status}): ${errText}`);
+                throw new Error(`觸發編譯失敗 (${dispatchRes.status}): ${errText}`);
             }
 
-            statusTitle.innerText = '🔄 已触发云端任务，正在分配编译服务器...';
+            statusTitle.innerText = '🔄 已觸發雲端任務，正在分配編譯服務器...';
             progressFill.style.width = '15%';
 
             let runObj = null;
@@ -245,7 +277,7 @@
                 }
             }
 
-            if (!runObj) throw new Error('未检测到新启动的编译任务，请前往仓库 Actions 页面查看。');
+            if (!runObj) throw new Error('未檢測到新啟動的編譯任務，請前往倉庫 Actions 頁面查看。');
 
             const runId = runObj.id;
             const runNumber = runObj.run_number;
@@ -256,15 +288,15 @@
                 const job = jobsData.jobs && jobsData.jobs[0];
 
                 if (job && job.steps) {
-                    const totalSteps = job.steps.length || 7;
+                    const totalSteps = job.steps.length || 8;
                     const completedSteps = job.steps.filter(s => s.status === 'completed').length;
                     const percent = Math.min(95, Math.max(20, Math.round((completedSteps / totalSteps) * 100)));
                     progressFill.style.width = percent + '%';
 
                     const currentStep = job.steps.find(s => s.status === 'in_progress');
                     statusTitle.innerText = currentStep
-                        ? `⚙️ 正在执行: ${currentStep.name} (${percent}%)`
-                        : `⏳ 任务状态: ${job.status}...`;
+                        ? `⚙️ 正在執行: ${currentStep.name} (${percent}%)`
+                        : `⏳ 任務狀態: ${job.status}...`;
 
                     stepList.innerHTML = job.steps.map(s => {
                         let icon = '⚪';
@@ -277,10 +309,10 @@
                     if (job.status === 'completed') {
                         if (job.conclusion === 'success') {
                             progressFill.style.width = '100%';
-                            statusTitle.innerText = '🎉 编译成功！正在获取 APK 直链...';
-                            await fetchReleaseApk(owner, repo, token, runNumber, downloadBtn, runObj.html_url);
+                            statusTitle.innerText = '🎉 編譯成功！正在獲取 APK 下載鏈接...';
+                            await fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn);
                         } else {
-                            statusTitle.innerText = `❌ 编译失败 (${job.conclusion})，请点击查看日志`;
+                            statusTitle.innerText = `❌ 編譯失敗 (${job.conclusion})，請點擊查看日誌`;
                         }
                         break;
                     }
@@ -293,24 +325,64 @@
         }
     }
 
-    async function fetchReleaseApk(owner, repo, token, runNumber, downloadBtn, fallbackUrl) {
+    let downloadFileUrl = '';
+
+    async function fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn) {
+        currentTagName = `build-${runNumber}`;
         for (let i = 0; i < 5; i++) {
-            const relRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/build-${runNumber}`, token);
+            const relRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${currentTagName}`, token);
             if (relRes.ok) {
                 const relData = await relRes.json();
+                currentReleaseId = relData.id;
                 const asset = relData.assets && relData.assets[0];
                 if (asset && asset.browser_download_url) {
-                    downloadBtn.href = asset.browser_download_url;
-                    downloadBtn.innerText = `⬇️ 立即下载 ${asset.name} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
+                    downloadFileUrl = asset.browser_download_url;
+                    downloadBtn.innerText = `⬇️ 立即下載 ${asset.name} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
                     downloadBtn.style.display = 'block';
                     return;
                 }
             }
             await new Promise(r => setTimeout(r, 2000));
         }
-        downloadBtn.href = fallbackUrl;
-        downloadBtn.innerText = '⬇️ 前往 GitHub Actions 页面下载 APK';
-        downloadBtn.style.display = 'block';
+        document.getElementById('statusTitle').innerText = '⚠️ 獲取下載鏈接超時，請前往 Actions 查看';
+    }
+
+    async function triggerDownloadAndClean() {
+        if (!downloadFileUrl) return;
+
+        const a = document.createElement('a');
+        a.href = downloadFileUrl;
+        a.download = '';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        const owner = document.getElementById('owner').value.trim();
+        const repo = document.getElementById('repo').value.trim();
+        const token = document.getElementById('token').value.trim();
+
+        const statusTitle = document.getElementById('statusTitle');
+        statusTitle.innerText = '🧹 正在自動清理雲端打包記錄（不留痕跡）...';
+
+        if (currentReleaseId) {
+            try {
+                await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/${currentReleaseId}`, token, { method: 'DELETE' });
+            } catch (e) {
+                console.error('刪除 Release 失敗', e);
+            }
+        }
+
+        if (currentTagName) {
+            try {
+                await ghFetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/tags/${currentTagName}`, token, { method: 'DELETE' });
+            } catch (e) {
+                console.error('刪除 Tag 失敗', e);
+            }
+        }
+
+        setTimeout(() => {
+            statusTitle.innerText = '✨ 打包完成，雲端痕跡已全部自動清除！';
+        }, 1500);
     }
 </script>
 </body>
