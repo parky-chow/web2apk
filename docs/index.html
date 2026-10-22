@@ -42,6 +42,7 @@
         .progress-fill { height: 100%; width: 5%; background: var(--primary); transition: width 0.5s ease; }
         .step-list { font-size: 13px; color: #475569; margin: 10px 0 0 0; padding-left: 18px; line-height: 1.7; }
         .download-btn { display: none; width: 100%; text-align: center; padding: 13px; background: var(--success); color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; margin-top: 14px; box-sizing: border-box; cursor: pointer; }
+        .delete-btn { display: none; width: 100%; text-align: center; padding: 10px; background: #64748b; color: #fff; border: none; border-radius: 8px; font-size: 13px; margin-top: 8px; cursor: pointer; }
         details { margin-bottom: 18px; background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
         summary { font-size: 13px; font-weight: 600; cursor: pointer; color: #475569; }
         .hint { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.4; }
@@ -90,7 +91,7 @@
         root.innerHTML = `
         <div class="container">
             <h2>📱 網頁轉 APK 雲端線上打包台</h2>
-            <p class="desc">輸入目標網址、應用名稱與上傳圖標，編譯完成下載後將自動清理雲端記錄。</p>
+            <p class="desc">輸入目標網址、應用名稱與上傳圖標，編譯完成後點擊按鈕即可下載安裝包。</p>
 
             <details id="config-panel">
                 <summary>⚙️ 首次使用配置 (GitHub 倉庫與 Token，自動保存在本地瀏覽器)</summary>
@@ -119,7 +120,7 @@
                     <div class="icon-preview" id="iconPreview">預覽</div>
                     <div style="flex: 1;">
                         <input type="file" id="iconFile" accept="image/png, image/jpeg" onchange="handleIconUpload(this)">
-                        <div class="hint">支持任意大小 PNG / JPG 圖片，不上傳則使用安卓默認圖標。</div>
+                        <div class="hint">支持任意大小 PNG / JPG 圖片，不上傳則使用默認圖標。</div>
                     </div>
                 </div>
             </div>
@@ -146,7 +147,9 @@
                 <div id="statusTitle" style="font-weight: 600; font-size: 14px;">正在請求雲端構建服務器...</div>
                 <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
                 <ul id="stepList" class="step-list"></ul>
-                <a id="downloadBtn" class="download-btn" onclick="triggerDownloadAndClean()">⬇️ 立即下載編譯好的 APK (下載後自動銷毀雲端文件)</a>
+                <!-- 下載直鏈：使用標準原生 <a> 標籤，不綁定即時刪除，避免下載未完成就被伺服器銷毀 -->
+                <a id="downloadBtn" class="download-btn" href="#" target="_blank" rel="noopener noreferrer">⬇️ 立即下載編譯好的 APK</a>
+                <button id="cleanBtn" class="delete-btn" onclick="cleanCloudRecords()">🧹 下載完成後點此銷毀雲端記錄（不留痕跡）</button>
             </div>
         </div>`;
 
@@ -222,10 +225,12 @@
         const progressFill = document.getElementById('progressFill');
         const stepList = document.getElementById('stepList');
         const downloadBtn = document.getElementById('downloadBtn');
+        const cleanBtn = document.getElementById('cleanBtn');
 
         btn.disabled = true;
         statusCard.style.display = 'block';
         downloadBtn.style.display = 'none';
+        cleanBtn.style.display = 'none';
         stepList.innerHTML = '';
         progressFill.style.width = '5%';
 
@@ -235,7 +240,6 @@
             const repoData = await repoRes.json();
             const defaultBranch = repoData.default_branch || 'main';
 
-            // 記錄當前已存在的最新 run ID，防止時間戳偏差
             let existingLatestId = 0;
             try {
                 const initialRunsRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=1`, token);
@@ -301,10 +305,9 @@
                 throw new Error(`觸發編譯失敗 (${dispatchRes.status}): ${errText}`);
             }
 
-            statusTitle.innerText = '🔄 已觸發雲端任務，正在等待 GitHub 分配排程 (通常需 5-10 秒)...';
+            statusTitle.innerText = '🔄 已觸發雲端任務，正在等待 GitHub 分配排程...';
             progressFill.style.width = '20%';
 
-            // 強化輪詢：允許等待最多 60 秒 (20次 x 3秒)，檢測任何 ID 大於舊 ID 或狀態為 queued/in_progress 的新任務
             let runObj = null;
             for (let i = 0; i < 20; i++) {
                 await new Promise(r => setTimeout(r, 3000));
@@ -313,7 +316,6 @@
                     const runsData = await runsRes.json();
                     if (runsData.workflow_runs && runsData.workflow_runs.length > 0) {
                         const candidate = runsData.workflow_runs[0];
-                        // 判定為新任務：ID 新於記錄值，或者當前處於 queued / in_progress 狀態
                         if (candidate.id > existingLatestId || candidate.status === 'queued' || candidate.status === 'in_progress') {
                             runObj = candidate;
                             break;
@@ -356,8 +358,8 @@
                     if (job.status === 'completed') {
                         if (job.conclusion === 'success') {
                             progressFill.style.width = '100%';
-                            statusTitle.innerText = '🎉 編譯成功！正在獲取 APK 下載鏈接...';
-                            await fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn);
+                            statusTitle.innerText = '🎉 編譯成功！正在獲取 APK 下載直鏈...';
+                            await fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn, cleanBtn);
                         } else {
                             statusTitle.innerText = `❌ 編譯失敗 (${job.conclusion})，請前往倉庫查看詳細日誌`;
                         }
@@ -372,64 +374,55 @@
         }
     }
 
-    let downloadFileUrl = '';
-
-    async function fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn) {
+    async function fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn, cleanBtn) {
         currentTagName = `build-${runNumber}`;
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 8; i++) {
             const relRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${currentTagName}`, token);
             if (relRes.ok) {
                 const relData = await relRes.json();
                 currentReleaseId = relData.id;
                 const asset = relData.assets && relData.assets[0];
                 if (asset && asset.browser_download_url) {
-                    downloadFileUrl = asset.browser_download_url;
+                    // 使用原生標準下載連結
+                    downloadBtn.href = asset.browser_download_url;
                     downloadBtn.innerText = `⬇️ 立即下載 ${asset.name} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
                     downloadBtn.style.display = 'block';
+                    cleanBtn.style.display = 'block';
+                    statusTitle.innerText = '✅ APK 生成完畢，請點擊下方綠色按鈕下載！';
                     return;
                 }
             }
-            await new Promise(r => setTimeout(r, 2000));
+            await new Promise(r => setTimeout(r, 2500));
         }
-        document.getElementById('statusTitle').innerText = '⚠️ 獲取下載鏈接超時，請前往 Actions 查看';
+        statusTitle.innerText = '⚠️ 獲取下載鏈接超時，請前往倉庫 Releases 查看';
     }
 
-    async function triggerDownloadAndClean() {
-        if (!downloadFileUrl) return;
-
-        const a = document.createElement('a');
-        a.href = downloadFileUrl;
-        a.download = '';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-
+    async function cleanCloudRecords() {
         const owner = document.getElementById('owner').value.trim();
         const repo = document.getElementById('repo').value.trim();
         const token = document.getElementById('token').value.trim();
-
         const statusTitle = document.getElementById('statusTitle');
-        statusTitle.innerText = '🧹 正在自動清理雲端打包記錄（不留痕跡）...';
+        const cleanBtn = document.getElementById('cleanBtn');
+
+        cleanBtn.disabled = true;
+        statusTitle.innerText = '🧹 正在銷毀雲端 Release 與標籤記錄...';
 
         if (currentReleaseId) {
             try {
                 await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/${currentReleaseId}`, token, { method: 'DELETE' });
-            } catch (e) {
-                console.error('刪除 Release 失敗', e);
-            }
+            } catch (e) {}
         }
 
         if (currentTagName) {
             try {
                 await ghFetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/tags/${currentTagName}`, token, { method: 'DELETE' });
-            } catch (e) {
-                console.error('刪除 Tag 失敗', e);
-            }
+            } catch (e) {}
         }
 
         setTimeout(() => {
-            statusTitle.innerText = '✨ 打包完成，雲端痕跡已全部自動清除！';
-        }, 1500);
+            statusTitle.innerText = '✨ 雲端 Release 與安裝包已全部銷毀，痕跡已清除！';
+            cleanBtn.innerText = '✅ 雲端記錄已銷毀';
+        }, 1200);
     }
 </script>
 </body>
