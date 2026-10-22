@@ -53,7 +53,6 @@ jobs:
           suffix = re.sub(r"[^a-zA-Z0-9]", "", os.environ.get("APP_SUFFIX") or "webtoapk").lower() or "webtoapk"
           has_icon = os.environ.get("HAS_ICON") == "true"
 
-          # 1. 處理自定義圖標
           icon_temp_path = "temp_icon.png"
           if has_icon and os.path.exists(icon_temp_path):
               try:
@@ -85,7 +84,6 @@ jobs:
               except Exception as e:
                   print("圖標處理警告:", e)
 
-          # 2. 安全替換 AndroidManifest.xml
           manifest_path = "app/src/main/AndroidManifest.xml"
           with open(manifest_path, "r", encoding="utf-8") as f:
               m = f.read()
@@ -96,7 +94,6 @@ jobs:
           with open(manifest_path, "w", encoding="utf-8") as f:
               f.write(m)
 
-          # 3. 替換 MainActivity.java
           java_path = "app/src/main/java/com/example/webtoapk/MainActivity.java"
           with open(java_path, "r", encoding="utf-8") as f:
               c = f.read()
@@ -104,7 +101,6 @@ jobs:
           with open(java_path, "w", encoding="utf-8") as f:
               f.write(c)
 
-          # 4. 替換 app/build.gradle
           gradle_path = "app/build.gradle"
           with open(gradle_path, "r", encoding="utf-8") as f:
               c = f.read()
@@ -125,14 +121,32 @@ jobs:
           gradle-version: '8.5'
 
       - name: 6. 編譯生成 APK
-        run: |
-          gradle assembleDebug
-          cp app/build/outputs/apk/debug/app-debug.apk ./app-release.apk
+        run: gradle assembleDebug
 
-      - name: 7. 發布到 Releases
+      - name: 7. 處理中文重命名
+        env:
+          APP_NAME: ${{ github.event.inputs.app_name }}
+          CUSTOM_NAME: ${{ github.event.inputs.custom_file_name }}
+        run: |
+          python3 -c '
+          import os, re, shutil
+          app_name = os.environ.get("APP_NAME", "").strip() or "我的應用"
+          custom = os.environ.get("CUSTOM_NAME", "").strip()
+          target_name = custom if custom else app_name
+          if not target_name.lower().endsWith(".apk"):
+              target_name += ".apk"
+          target_name = re.sub(r"[\\\\/:*?\"<>|]", "_", target_name)
+          
+          src = "app/build/outputs/apk/debug/app-debug.apk"
+          shutil.copy(src, target_name)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write(f"TARGET_FILE={target_name}\\n")
+          '
+
+      - name: 8. 發布到 Releases 生成下載附件
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: "${{ github.event.inputs.app_name || 'App' }} (構建 #${{ github.run_number }})"
           body: "目標網址: ${{ github.event.inputs.target_url }}"
-          files: ./app-release.apk
+          files: ${{ env.TARGET_FILE }}
