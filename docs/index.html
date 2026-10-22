@@ -83,7 +83,7 @@
     let currentReleaseId = null;
     let currentTagName = null;
     let rawDownloadUrl = '';
-    let customDownloadFileName = 'app.apk';
+    let actualAssetName = '';
 
     function renderMainApp() {
         document.title = 'Web轉APK 雲端線上打包平台';
@@ -143,8 +143,8 @@
             </div>
 
             <div class="form-group">
-                <label>💾 下載保存的文件名 (可選自定義)</label>
-                <input type="text" class="form-input" id="customFileName" placeholder="例如：我的商城_v1.0.apk (留空則自動使用應用名稱)">
+                <label>💾 自定義下載 APK 文件名 (留空則自動使用應用名稱命名)</label>
+                <input type="text" class="form-input" id="customFileName" placeholder="例如：我的商城_v1.0 (無需手動加 .apk)">
             </div>
 
             <button id="buildBtn" class="btn" onclick="startBuild()">🚀 開始雲端編譯 APK</button>
@@ -153,7 +153,6 @@
                 <div id="statusTitle" style="font-weight: 600; font-size: 14px;">正在請求雲端構建服務器...</div>
                 <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
                 <ul id="stepList" class="step-list"></ul>
-                <!-- 使用原生 a 標籤直連下載，避免 fetch 跨域重定向導致 failed to fetch -->
                 <a id="downloadBtn" class="download-btn" href="#" target="_blank" onclick="handleClickDownload(event)">⬇️ 立即下載編譯好的 APK</a>
             </div>
         </div>`;
@@ -209,14 +208,7 @@
         const targetUrl = document.getElementById('targetUrl').value.trim();
         const appName = document.getElementById('appName').value.trim();
         const appSuffix = document.getElementById('appSuffix').value.trim() || 'webtoapk';
-        
-        let customName = document.getElementById('customFileName').value.trim();
-        if (!customName) {
-            customName = (appName || 'app') + '.apk';
-        } else if (!customName.toLowerCase().endsWith('.apk')) {
-            customName += '.apk';
-        }
-        customDownloadFileName = customName;
+        const customFileName = document.getElementById('customFileName').value.trim();
 
         if (!owner || !repo || !token) {
             alert('請先展開頂部【首次使用配置】，填寫 GitHub 用戶名、倉庫名和 Token！');
@@ -305,7 +297,8 @@
                             target_url: targetUrl,
                             app_name: appName,
                             app_id_suffix: appSuffix,
-                            has_custom_icon: hasCustomIcon
+                            has_custom_icon: hasCustomIcon,
+                            custom_file_name: customFileName
                         }
                     })
                 }
@@ -348,7 +341,7 @@
                 const job = jobsData.jobs && jobsData.jobs[0];
 
                 if (job && job.steps) {
-                    const totalSteps = job.steps.length || 8;
+                    const totalSteps = job.steps.length || 7;
                     const completedSteps = job.steps.filter(s => s.status === 'completed').length;
                     const percent = Math.min(95, Math.max(25, Math.round((completedSteps / totalSteps) * 100)));
                     progressFill.style.width = percent + '%';
@@ -395,9 +388,10 @@
                 const asset = relData.assets && relData.assets[0];
                 if (asset && asset.browser_download_url) {
                     rawDownloadUrl = asset.browser_download_url;
+                    actualAssetName = asset.name;
                     downloadBtn.href = rawDownloadUrl;
-                    downloadBtn.download = customDownloadFileName;
-                    downloadBtn.innerText = `⬇️ 立即下載 ${customDownloadFileName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
+                    downloadBtn.download = actualAssetName;
+                    downloadBtn.innerText = `⬇️ 立即下載 ${actualAssetName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
                     downloadBtn.style.display = 'block';
                     statusTitle.innerText = '✅ APK 生成完畢，點擊按鈕即可下載並自動銷毀雲端記錄！';
                     return;
@@ -408,7 +402,6 @@
         statusTitle.innerText = '⚠️ 獲取下載鏈接超時，請前往倉庫 Releases 查看';
     }
 
-    // 核心修復：使用原生導航觸發直鏈下載，完全繞過 JavaScript fetch 的跨域 CORS 阻斷
     async function handleClickDownload(e) {
         const owner = document.getElementById('owner').value.trim();
         const repo = document.getElementById('repo').value.trim();
@@ -420,7 +413,6 @@
         downloadBtn.innerText = '⏳ 下載已觸發，正在安全延時銷毀雲端記錄...';
         statusTitle.innerText = '📥 下載請求已發送至瀏覽器核心。5 秒後將自動清理雲端記錄...';
 
-        // 延時 5 秒等待瀏覽器建立下載管道，隨後自動銷毀 Release 與 Tag
         setTimeout(async () => {
             if (currentReleaseId) {
                 try {
