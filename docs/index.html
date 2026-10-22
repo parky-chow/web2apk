@@ -141,11 +141,6 @@
                 </div>
             </div>
 
-            <div class="form-group">
-                <label>💾 自定義下載 APK 文件名 (支持中文，留空則自動使用應用名稱命名)</label>
-                <input type="text" class="form-input" id="customFileName" placeholder="例如：我的內部商城 (無需加 .apk)">
-            </div>
-
             <button id="buildBtn" class="btn" onclick="startBuild()">🚀 開始雲端編譯 APK</button>
 
             <div id="statusCard" class="status-card">
@@ -207,7 +202,6 @@
         const targetUrl = document.getElementById('targetUrl').value.trim();
         const appName = document.getElementById('appName').value.trim();
         const appSuffix = document.getElementById('appSuffix').value.trim() || 'webtoapk';
-        const customFileName = document.getElementById('customFileName').value.trim();
 
         if (!owner || !repo || !token) {
             alert('請先展開頂部【首次使用配置】，填寫 GitHub 用戶名、倉庫名和 Token！');
@@ -296,8 +290,7 @@
                             target_url: targetUrl,
                             app_name: appName,
                             app_id_suffix: appSuffix,
-                            has_custom_icon: hasCustomIcon,
-                            custom_file_name: customFileName
+                            has_custom_icon: hasCustomIcon
                         }
                     })
                 }
@@ -340,7 +333,7 @@
                 const job = jobsData.jobs && jobsData.jobs[0];
 
                 if (job && job.steps) {
-                    const totalSteps = job.steps.length || 8;
+                    const totalSteps = job.steps.length || 7;
                     const completedSteps = job.steps.filter(s => s.status === 'completed').length;
                     const percent = Math.min(95, Math.max(25, Math.round((completedSteps / totalSteps) * 100)));
                     progressFill.style.width = percent + '%';
@@ -378,26 +371,60 @@
     }
 
     async function fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn) {
-        currentTagName = `build-${runNumber}`;
-        for (let i = 0; i < 8; i++) {
-            const relRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${currentTagName}`, token);
-            if (relRes.ok) {
-                const relData = await relRes.json();
-                currentReleaseId = relData.id;
-                const asset = relData.assets && relData.assets[0];
-                if (asset && asset.browser_download_url) {
-                    rawDownloadUrl = asset.browser_download_url;
-                    const displayName = decodeURIComponent(asset.name);
-                    downloadBtn.href = rawDownloadUrl;
-                    downloadBtn.innerText = `⬇️ 立即下載 ${displayName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
-                    downloadBtn.style.display = 'block';
-                    statusTitle.innerText = '✅ APK 生成完畢，點擊按鈕即可下載並自動銷毀雲端記錄！';
-                    return;
+        const expectedTag = `build-${runNumber}`;
+        const statusTitle = document.getElementById('statusTitle');
+
+        for (let i = 0; i < 15; i++) {
+            statusTitle.innerText = `⏳ 正在連接雲端發布附件... (${i + 1}/15)`;
+
+            try {
+                const relRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${expectedTag}`, token);
+                if (relRes.ok) {
+                    const relData = await relRes.json();
+                    if (relData.assets && relData.assets.length > 0) {
+                        const asset = relData.assets[0];
+                        if (asset.browser_download_url) {
+                            showDownloadButton(asset, relData.id, relData.tag_name, downloadBtn);
+                            return;
+                        }
+                    }
                 }
-            }
+            } catch(e) {}
+
+            try {
+                const latestRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=1`, token);
+                if (latestRes.ok) {
+                    const list = await latestRes.json();
+                    if (list && list.length > 0) {
+                        const latestRel = list[0];
+                        if (latestRel.assets && latestRel.assets.length > 0) {
+                            const asset = latestRel.assets[0];
+                            if (asset.browser_download_url) {
+                                showDownloadButton(asset, latestRel.id, latestRel.tag_name, downloadBtn);
+                                return;
+                            }
+                        }
+                    }
+                }
+            } catch(e) {}
+
             await new Promise(r => setTimeout(r, 2500));
         }
-        statusTitle.innerText = '⚠️ 獲取下載鏈接超時，請前往倉庫 Releases 查看';
+
+        statusTitle.innerText = '⚠️ 獲取下載鏈接超時，請點擊下方備用按鈕前往 Releases 查看';
+        downloadBtn.href = `https://github.com/${owner}/${repo}/releases`;
+        downloadBtn.innerText = '📦 前往 GitHub Releases 頁面手動下載';
+        downloadBtn.style.display = 'block';
+    }
+
+    function showDownloadButton(asset, relId, tagName, downloadBtn) {
+        currentReleaseId = relId;
+        currentTagName = tagName;
+        rawDownloadUrl = asset.browser_download_url;
+        downloadBtn.href = rawDownloadUrl;
+        downloadBtn.innerText = `⬇️ 立即下載安裝包 (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
+        downloadBtn.style.display = 'block';
+        document.getElementById('statusTitle').innerText = '✅ APK 生成完畢，點擊按鈕即可下載並自動銷毀雲端記錄！';
     }
 
     async function handleClickDownload(e) {
