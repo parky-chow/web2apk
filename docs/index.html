@@ -79,7 +79,7 @@
         }
     }
 
-    let globalIconBase64 = '';
+    let globalPureBase64 = '';
     let currentReleaseId = null;
     let currentTagName = null;
 
@@ -119,7 +119,7 @@
                     <div class="icon-preview" id="iconPreview">預覽</div>
                     <div style="flex: 1;">
                         <input type="file" id="iconFile" accept="image/png, image/jpeg" onchange="handleIconUpload(this)">
-                        <div class="hint">支持任意大小圖片，前端會自動壓縮為超高清 192x192 規格上傳（小於 30KB，防止 API 超載）。</div>
+                        <div class="hint">支持任意大小 PNG / JPG 圖片，不上傳則使用默認圖標。</div>
                     </div>
                 </div>
             </div>
@@ -153,34 +153,15 @@
         initSavedConfig();
     }
 
-    // 核心修復：在前端使用 Canvas 自動裁切並壓縮至 192x192，確保 Base64 小於 35KB，規避 GitHub 65KB 限制
     function handleIconUpload(input) {
         if (input.files && input.files[0]) {
             const file = input.files[0];
             const reader = new FileReader();
             reader.onload = function(e) {
-                const img = new Image();
-                img.onload = function() {
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    
-                    const targetSize = 192; // 安卓 xxxhdpi 最高規格圖標尺寸
-                    canvas.width = targetSize;
-                    canvas.height = targetSize;
-
-                    // 正方形中心裁切縮放
-                    const minDim = Math.min(img.width, img.height);
-                    const sx = (img.width - minDim) / 2;
-                    const sy = (img.height - minDim) / 2;
-
-                    ctx.clearRect(0, 0, targetSize, targetSize);
-                    ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, targetSize, targetSize);
-
-                    // 輸出為輕量化 WebP/PNG Base64（約 15KB ~ 30KB）
-                    globalIconBase64 = canvas.toDataURL('image/png');
-                    document.getElementById('iconPreview').innerHTML = `<img src="${globalIconBase64}" alt="Icon">`;
-                };
-                img.src = e.target.result;
+                const fullDataUrl = e.target.result;
+                document.getElementById('iconPreview').innerHTML = `<img src="${fullDataUrl}" alt="Icon">`;
+                // 提取純 Base64 數據
+                globalPureBase64 = fullDataUrl.split(',')[1] || '';
             };
             reader.readAsDataURL(file);
         }
@@ -247,8 +228,7 @@
         statusCard.style.display = 'block';
         downloadBtn.style.display = 'none';
         stepList.innerHTML = '';
-        progressFill.style.width = '8%';
-        statusTitle.innerText = '⏳ 正在向 GitHub 發送構建指令...';
+        progressFill.style.width = '5%';
 
         try {
             const repoRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}`, token);
@@ -256,8 +236,44 @@
             const repoData = await repoRes.json();
             const defaultBranch = repoData.default_branch || 'main';
 
+            // 核心解法：若上傳了圖標，先通過 Contents API 將圖片上傳為倉庫臨時文件（無大小限制）
+            let hasCustomIcon = "false";
+            if (globalPureBase64) {
+                statusTitle.innerText = '📤 正在傳輸自定義圖標資源...';
+                progressFill.style.width = '10%';
+                
+                // 獲取 temp_icon.png 的 sha（若存在）
+                let fileSha = undefined;
+                try {
+                    const getRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/contents/temp_icon.png?ref=${defaultBranch}`, token);
+                    if (getRes.ok) {
+                        const fileInfo = await getRes.json();
+                        fileSha = fileInfo.sha;
+                    }
+                } catch(e) {}
+
+                const putRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/contents/temp_icon.png`, token, {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        message: 'upload temporary app icon',
+                        content: globalPureBase64,
+                        branch: defaultBranch,
+                        sha: fileSha
+                    })
+                });
+
+                if (putRes.ok) {
+                    hasCustomIcon = "true";
+                } else {
+                    console.warn('圖標上傳失敗，將使用默認圖標');
+                }
+            }
+
+            statusTitle.innerText = '⏳ 正在向 GitHub 發送構建指令...';
+            progressFill.style.width = '15%';
             const triggerTime = Date.now() - 5000;
 
+            // 觸發 workflow_dispatch，只傳遞極簡的文字標識，不再傳巨型 Base64
             const dispatchRes = await ghFetch(
                 `https://api.github.com/repos/${owner}/${repo}/actions/workflows/build.yml/dispatches`,
                 token,
@@ -269,7 +285,7 @@
                             target_url: targetUrl,
                             app_name: appName,
                             app_id_suffix: appSuffix,
-                            icon_base64: globalIconBase64
+                            has_custom_icon: hasCustomIcon
                         }
                     })
                 }
@@ -281,7 +297,7 @@
             }
 
             statusTitle.innerText = '🔄 已觸發雲端任務，正在分配編譯服務器...';
-            progressFill.style.width = '15%';
+            progressFill.style.width = '20%';
 
             let runObj = null;
             for (let i = 0; i < 15; i++) {
