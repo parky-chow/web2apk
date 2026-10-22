@@ -42,6 +42,8 @@
         .progress-fill { height: 100%; width: 5%; background: var(--primary); transition: width 0.5s ease; }
         .step-list { font-size: 13px; color: #475569; margin: 10px 0 0 0; padding-left: 18px; line-height: 1.7; }
         .download-btn { display: none; width: 100%; text-align: center; padding: 13px; background: var(--success); color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; margin-top: 14px; box-sizing: border-box; cursor: pointer; font-size: 15px; }
+        .backup-link { display: none; margin-top: 10px; text-align: center; font-size: 13px; }
+        .backup-link a { color: var(--primary); text-decoration: underline; cursor: pointer; }
         details { margin-bottom: 18px; background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
         summary { font-size: 13px; font-weight: 600; cursor: pointer; color: #475569; }
         .hint { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.4; }
@@ -148,6 +150,9 @@
                 <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
                 <ul id="stepList" class="step-list"></ul>
                 <a id="downloadBtn" class="download-btn" href="#" target="_blank" onclick="handleClickDownload(event)">⬇️ 立即下載編譯好的 APK</a>
+                <div id="backupLink" class="backup-link">
+                    <a id="backupA" target="_blank" rel="noopener noreferrer">點此直接打開 Releases 下載列表</a>
+                </div>
             </div>
         </div>`;
 
@@ -223,10 +228,12 @@
         const progressFill = document.getElementById('progressFill');
         const stepList = document.getElementById('stepList');
         const downloadBtn = document.getElementById('downloadBtn');
+        const backupLink = document.getElementById('backupLink');
 
         btn.disabled = true;
         statusCard.style.display = 'block';
         downloadBtn.style.display = 'none';
+        backupLink.style.display = 'none';
         stepList.innerHTML = '';
         progressFill.style.width = '5%';
 
@@ -355,7 +362,7 @@
                         if (job.conclusion === 'success') {
                             progressFill.style.width = '100%';
                             statusTitle.innerText = '🎉 編譯成功！正在校驗 APK 下載資源...';
-                            await fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn);
+                            await fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn, backupLink);
                         } else {
                             statusTitle.innerText = `❌ 編譯失敗 (${job.conclusion})，請前往倉庫查看詳細日誌`;
                         }
@@ -370,37 +377,23 @@
         }
     }
 
-    async function fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn) {
+    async function fetchReleaseDetails(owner, repo, token, runNumber, downloadBtn, backupLink) {
         const expectedTag = `build-${runNumber}`;
         const statusTitle = document.getElementById('statusTitle');
 
-        for (let i = 0; i < 15; i++) {
-            statusTitle.innerText = `⏳ 正在連接雲端發布附件... (${i + 1}/15)`;
+        for (let i = 0; i < 20; i++) {
+            statusTitle.innerText = `⏳ 正在連接雲端發布附件... (${i + 1}/20)`;
 
             try {
-                const relRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${expectedTag}`, token);
-                if (relRes.ok) {
-                    const relData = await relRes.json();
-                    if (relData.assets && relData.assets.length > 0) {
-                        const asset = relData.assets[0];
-                        if (asset.browser_download_url) {
-                            showDownloadButton(asset, relData.id, relData.tag_name, downloadBtn);
-                            return;
-                        }
-                    }
-                }
-            } catch(e) {}
-
-            try {
-                const latestRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=1`, token);
-                if (latestRes.ok) {
-                    const list = await latestRes.json();
+                const listRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=3`, token);
+                if (listRes.ok) {
+                    const list = await listRes.json();
                     if (list && list.length > 0) {
-                        const latestRel = list[0];
-                        if (latestRel.assets && latestRel.assets.length > 0) {
-                            const asset = latestRel.assets[0];
-                            if (asset.browser_download_url) {
-                                showDownloadButton(asset, latestRel.id, latestRel.tag_name, downloadBtn);
+                        const rel = list.find(r => r.tag_name === expectedTag) || list[0];
+                        if (rel.assets && rel.assets.length > 0) {
+                            const asset = rel.assets.find(a => a.name.endsWith('.apk')) || rel.assets[0];
+                            if (asset && asset.browser_download_url) {
+                                showDownloadButton(asset, rel.id, rel.tag_name, downloadBtn);
                                 return;
                             }
                         }
@@ -408,13 +401,34 @@
                 }
             } catch(e) {}
 
-            await new Promise(r => setTimeout(r, 2500));
+            try {
+                const tagRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${expectedTag}`, token);
+                if (tagRes.ok) {
+                    const relData = await tagRes.json();
+                    if (relData.assets && relData.assets.length > 0) {
+                        const asset = relData.assets.find(a => a.name.endsWith('.apk')) || relData.assets[0];
+                        if (asset && asset.browser_download_url) {
+                            showDownloadButton(asset, relData.id, relData.tag_name, downloadBtn);
+                            return;
+                        }
+                    }
+                }
+            } catch(e) {}
+
+            await new Promise(r => setTimeout(r, 2000));
         }
 
-        statusTitle.innerText = '⚠️ 獲取下載鏈接超時，請點擊下方備用按鈕前往 Releases 查看';
-        downloadBtn.href = `https://github.com/${owner}/${repo}/releases`;
-        downloadBtn.innerText = '📦 前往 GitHub Releases 頁面手動下載';
+        const directFallbackUrl = `https://github.com/${owner}/${repo}/releases/download/${expectedTag}/app-release.apk`;
+        currentTagName = expectedTag;
+        rawDownloadUrl = directFallbackUrl;
+        downloadBtn.href = rawDownloadUrl;
+        downloadBtn.innerText = `⬇️ 點此立即下載 APK (直連通道)`;
         downloadBtn.style.display = 'block';
+
+        const backupA = document.getElementById('backupA');
+        backupA.href = `https://github.com/${owner}/${repo}/releases`;
+        backupLink.style.display = 'block';
+        statusTitle.innerText = '✅ 編譯已完成，已為你接通直連下載通道！';
     }
 
     function showDownloadButton(asset, relId, tagName, downloadBtn) {
