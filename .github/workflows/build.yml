@@ -4,17 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       target_url:
-        description: '目标网站地址'
+        description: '目標網站地址'
         required: true
         default: 'https://www.bing.com'
       app_name:
-        description: '应用名称'
+        description: '應用名稱'
         required: true
-        default: '我的应用'
+        default: '我的應用'
       app_id_suffix:
-        description: '包名后缀 (纯英文字母)'
+        description: '包名後綴 (純英文字母)'
         required: false
         default: 'webtoapk'
+      icon_base64:
+        description: 'App圖標Base64數據'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -23,22 +27,56 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. 检出源码 (Checkout)
+      - name: 1. 檢出源碼 (Checkout)
         uses: actions/checkout@v4
 
-      - name: 2. 动态写入网页提交的网址与App名称
+      - name: 2. 安裝 Python 圖像處理庫 Pillow
+        run: pip install Pillow
+
+      - name: 3. 動態寫入網址、App名稱與生成多尺寸圖標
         env:
           TARGET_URL: ${{ github.event.inputs.target_url }}
           APP_NAME: ${{ github.event.inputs.app_name }}
           APP_SUFFIX: ${{ github.event.inputs.app_id_suffix }}
+          ICON_BASE64: ${{ github.event.inputs.icon_base64 }}
         run: |
           python3 -c '
-          import os, re
-          url = os.environ.get("TARGET_URL") or "https://www.bing.com"
-          name = os.environ.get("APP_NAME") or "我的应用"
-          suffix = re.sub(r"[^a-zA-Z0-9]", "", os.environ.get("APP_SUFFIX") or "webtoapk").lower() or "webtoapk"
+          import os, re, base64
+          from io import BytesIO
+          from PIL import Image
 
-          # 1. 替换 MainActivity.java 中的网址
+          url = os.environ.get("TARGET_URL") or "https://www.bing.com"
+          name = os.environ.get("APP_NAME") or "我的應用"
+          suffix = re.sub(r"[^a-zA-Z0-9]", "", os.environ.get("APP_SUFFIX") or "webtoapk").lower() or "webtoapk"
+          icon_b64 = os.environ.get("ICON_BASE64", "").strip()
+
+          # 1. 處理自定義圖標
+          if icon_b64:
+              try:
+                  if "," in icon_b64:
+                      icon_b64 = icon_b64.split(",")[1]
+                  img_data = base64.b64decode(icon_b64)
+                  img = Image.open(BytesIO(img_data)).convert("RGBA")
+                  
+                  # 安卓標準圖標尺寸對應目錄
+                  sizes = {
+                      "mipmap-mdpi": 48,
+                      "mipmap-hdpi": 72,
+                      "mipmap-xhdpi": 96,
+                      "mipmap-xxhdpi": 144,
+                      "mipmap-xxxhdpi": 192
+                  }
+                  for folder, size in sizes.items():
+                      dir_path = f"app/src/main/res/{folder}"
+                      os.makedirs(dir_path, exist_ok=True)
+                      resized = img.resize((size, size), Image.Resampling.LANCZOS)
+                      resized.save(os.path.join(dir_path, "ic_launcher.png"))
+                      resized.save(os.path.join(dir_path, "ic_launcher_round.png"))
+                  print("✅ 自定義圖標已成功生成並覆蓋！")
+              except Exception as e:
+                  print(f"⚠️ 圖標解析失敗，使用默認圖標: {e}")
+
+          # 2. 替換 MainActivity.java 中的網址
           java_path = "app/src/main/java/com/example/webtoapk/MainActivity.java"
           with open(java_path, "r", encoding="utf-8") as f:
               c = f.read()
@@ -46,15 +84,18 @@ jobs:
           with open(java_path, "w", encoding="utf-8") as f:
               f.write(c)
 
-          # 2. 替换 AndroidManifest.xml 中的应用名称
+          # 3. 替換 AndroidManifest.xml 中的應用名稱
           manifest_path = "app/src/main/AndroidManifest.xml"
           with open(manifest_path, "r", encoding="utf-8") as f:
               c = f.read()
           c = re.sub(r"android:label=\".*?\"", f"android:label=\"{name}\"", c)
+          # 確保圖標引用正確
+          if "android:icon" not in c:
+              c = c.replace("<application", "<application android:icon=\"@mipmap/ic_launcher\" android:roundIcon=\"@mipmap/ic_launcher_round\"")
           with open(manifest_path, "w", encoding="utf-8") as f:
               f.write(c)
 
-          # 3. 替换 app/build.gradle 中的 applicationId 防止不同App互相覆盖
+          # 4. 替換 app/build.gradle 中的 applicationId
           gradle_path = "app/build.gradle"
           with open(gradle_path, "r", encoding="utf-8") as f:
               c = f.read()
@@ -63,32 +104,32 @@ jobs:
               f.write(c)
           '
 
-      - name: 3. 配置 JDK 17 环境
+      - name: 4. 配置 JDK 17 環境
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 4. 配置 Gradle 8.5 编译工具
+      - name: 5. 配置 Gradle 8.5 編譯工具
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.5'
 
-      - name: 5. 编译生成可安装的 APK
+      - name: 6. 編譯生成可安裝的 APK
         run: |
           gradle assembleDebug
           cp app/build/outputs/apk/debug/app-debug.apk ./app-release-${{ github.run_number }}.apk
 
-      - name: 6. 上传到 Artifacts 备份
+      - name: 7. 上傳到 Artifacts 備份
         uses: actions/upload-artifact@v4
         with:
-          name: Android-APK-安装包
+          name: Android-APK-安裝包
           path: ./app-release-${{ github.run_number }}.apk
 
-      - name: 7. 发布到 Releases 生成直接下载链接
+      - name: 8. 發布到 Releases 生成直接下載鏈接
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: "${{ github.event.inputs.app_name || 'App' }} (构建 #${{ github.run_number }})"
-          body: "目标网址: ${{ github.event.inputs.target_url }}"
+          name: "${{ github.event.inputs.app_name || 'App' }} (構建 #${{ github.run_number }})"
+          body: "目標網址: ${{ github.event.inputs.target_url }}"
           files: ./app-release-${{ github.run_number }}.apk
