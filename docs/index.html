@@ -85,8 +85,6 @@
     let globalPureBase64 = '';
     let currentReleaseId = null;
     let currentTagName = null;
-    let rawDownloadUrl = '';
-    let targetAssetId = null;
 
     function renderMainApp() {
         document.title = 'Web轉APK 雲端線上打包平台';
@@ -146,7 +144,7 @@
             </div>
 
             <div class="form-group">
-                <label>💾 自定義下載 APK 文件名 (支持中文，留空則自動使用應用名稱命名)</label>
+                <label>💾 自定義下載 APK 文件名 (支持中文，留空則自動使用應用名稱)</label>
                 <input type="text" class="form-input" id="customFileName" placeholder="例如：我的內部商城 (無需加 .apk)">
             </div>
 
@@ -156,8 +154,8 @@
                 <div id="statusTitle" style="font-weight: 600; font-size: 14px;">正在請求雲端構建服務器...</div>
                 <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
                 <ul id="stepList" class="step-list"></ul>
-                <!-- 使用 API 二進制流下載，解決跨域及自定義命名問題 -->
-                <button id="downloadBtn" class="download-btn" onclick="executeBlobDownload()">⬇️ 立即下載編譯好的 APK</button>
+                <!-- 核心：回歸最原生的直連跳轉下載，因為雲端已經將檔案正確命名為中文了 -->
+                <a id="downloadBtn" class="download-btn" href="#" target="_blank" onclick="handleClickDownload(event)">⬇️ 立即下載編譯好的 APK</a>
                 <div id="backupLink" class="backup-link">
                     <a id="backupA" target="_blank" rel="noopener noreferrer">點此直接打開 Releases 下載列表</a>
                 </div>
@@ -215,6 +213,7 @@
         const targetUrl = document.getElementById('targetUrl').value.trim();
         const appName = document.getElementById('appName').value.trim();
         const appSuffix = document.getElementById('appSuffix').value.trim() || 'webtoapk';
+        const customFileName = document.getElementById('customFileName').value.trim();
 
         if (!owner || !repo || !token) {
             alert('請先展開頂部【首次使用配置】，填寫 GitHub 用戶名、倉庫名和 Token！');
@@ -305,7 +304,8 @@
                             target_url: targetUrl,
                             app_name: appName,
                             app_id_suffix: appSuffix,
-                            has_custom_icon: hasCustomIcon
+                            has_custom_icon: hasCustomIcon,
+                            custom_file_name: customFileName
                         }
                     })
                 }
@@ -348,7 +348,7 @@
                 const job = jobsData.jobs && jobsData.jobs[0];
 
                 if (job && job.steps) {
-                    const totalSteps = job.steps.length || 7;
+                    const totalSteps = job.steps.length || 6;
                     const completedSteps = job.steps.filter(s => s.status === 'completed').length;
                     const percent = Math.min(95, Math.max(25, Math.round((completedSteps / totalSteps) * 100)));
                     progressFill.style.width = percent + '%';
@@ -389,11 +389,10 @@
         const expectedTag = `build-${runNumber}`;
         const statusTitle = document.getElementById('statusTitle');
 
-        // 輪詢最多 20 次，每次 2 秒，總容錯時間 40 秒
+        // 輪詢最多 20 次，總容錯時間 40 秒
         for (let i = 0; i < 20; i++) {
             statusTitle.innerText = `⏳ 正在連接雲端發布附件... (${i + 1}/20)`;
 
-            // 策略 1：查詢所有 releases 列表第一筆
             try {
                 const listRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=3`, token);
                 if (listRes.ok) {
@@ -402,7 +401,7 @@
                         const rel = list.find(r => r.tag_name === expectedTag) || list[0];
                         if (rel.assets && rel.assets.length > 0) {
                             const asset = rel.assets.find(a => a.name.endsWith('.apk')) || rel.assets[0];
-                            if (asset && asset.id) {
+                            if (asset && asset.browser_download_url) {
                                 showDownloadButton(asset, rel.id, rel.tag_name, downloadBtn);
                                 return;
                             }
@@ -411,14 +410,13 @@
                 }
             } catch(e) {}
 
-            // 策略 2：按具體 tag 精確查詢
             try {
                 const tagRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${expectedTag}`, token);
                 if (tagRes.ok) {
                     const relData = await tagRes.json();
                     if (relData.assets && relData.assets.length > 0) {
                         const asset = relData.assets.find(a => a.name.endsWith('.apk')) || relData.assets[0];
-                        if (asset && asset.id) {
+                        if (asset && asset.browser_download_url) {
                             showDownloadButton(asset, relData.id, relData.tag_name, downloadBtn);
                             return;
                         }
@@ -429,7 +427,6 @@
             await new Promise(r => setTimeout(r, 2000));
         }
 
-        // 終極保底方案：手動連結
         const backupA = document.getElementById('backupA');
         backupA.href = `https://github.com/${owner}/${repo}/releases`;
         backupLink.style.display = 'block';
@@ -439,91 +436,35 @@
     function showDownloadButton(asset, relId, tagName, downloadBtn) {
         currentReleaseId = relId;
         currentTagName = tagName;
-        targetAssetId = asset.id;
-        rawDownloadUrl = asset.browser_download_url;
-
-        let customName = document.getElementById('customFileName').value.trim();
-        let fallbackName = document.getElementById('appName').value.trim() || 'app';
-        let finalName = customName ? customName : fallbackName;
-        if (!finalName.toLowerCase().endsWith('.apk')) {
-            finalName += '.apk';
-        }
-
-        downloadBtn.innerText = `⬇️ 立即下載 ${finalName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
+        const displayName = decodeURIComponent(asset.name); // 顯示雲端真實文件名 (已由官方 CLI 正確命名)
+        
+        downloadBtn.href = asset.browser_download_url;
+        downloadBtn.innerText = `⬇️ 立即下載 ${displayName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
         downloadBtn.style.display = 'block';
         document.getElementById('statusTitle').innerText = '✅ APK 生成完畢，點擊按鈕即可一鍵下載！';
     }
 
-    // 使用 GitHub Asset API 獲取二進制資料流，徹底解決 CORS 與自定義命名問題
-    async function executeBlobDownload() {
+    async function handleClickDownload(e) {
         const owner = document.getElementById('owner').value.trim();
         const repo = document.getElementById('repo').value.trim();
         const token = document.getElementById('token').value.trim();
         const downloadBtn = document.getElementById('downloadBtn');
         const statusTitle = document.getElementById('statusTitle');
 
-        if (!targetAssetId) return;
+        downloadBtn.style.pointerEvents = 'none';
+        downloadBtn.innerText = '⏳ 下載已觸發，正在安全延時銷毀雲端記錄...';
+        statusTitle.innerText = '📥 下載請求已發送至瀏覽器核心。5 秒後將自動清理雲端記錄...';
 
-        let customName = document.getElementById('customFileName').value.trim();
-        let fallbackName = document.getElementById('appName').value.trim() || 'app';
-        let finalName = customName ? customName : fallbackName;
-        if (!finalName.toLowerCase().endsWith('.apk')) {
-            finalName += '.apk';
-        }
-
-        downloadBtn.disabled = true;
-        downloadBtn.innerText = '⏳ 正在讀取安全加密數據流，請稍候...';
-        statusTitle.innerText = '📥 正在從 GitHub 安全節點傳輸安裝包...';
-
-        try {
-            // 使用專屬的 API endpoint 下載附件，並透過 Accept: application/octet-stream 觸發二進制傳輸
-            const assetApiUrl = `https://api.github.com/repos/${owner}/${repo}/releases/assets/${targetAssetId}`;
-            const res = await fetch(assetApiUrl, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Accept': 'application/octet-stream'
-                }
-            });
-
-            if (!res.ok) {
-                throw new Error(`下載被拒 (${res.status})，請確認 Token 權限`);
+        setTimeout(async () => {
+            if (currentReleaseId) {
+                try { await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/${currentReleaseId}`, token, { method: 'DELETE' }); } catch(e) {}
             }
-
-            const blob = await res.blob();
-            const blobUrl = window.URL.createObjectURL(blob);
-            
-            // 透過創建虛擬連結觸發本地儲存，完美繞過所有伺服器命名的限制
-            const tempA = document.createElement('a');
-            tempA.href = blobUrl;
-            tempA.download = finalName;
-            document.body.appendChild(tempA);
-            tempA.click();
-            document.body.removeChild(tempA);
-            window.URL.revokeObjectURL(blobUrl);
-
-            downloadBtn.innerText = '✨ 下載啟動完成！正在後台銷毀雲端記錄...';
-            statusTitle.innerText = '🎉 安裝包已發送至本機，雲端痕跡將在 3 秒內徹底抹除。';
-
-            // 確保檔案開始下載後，立即啟動閱後即焚
-            setTimeout(async () => {
-                if (currentReleaseId) {
-                    try { await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/${currentReleaseId}`, token, { method: 'DELETE' }); } catch(e) {}
-                }
-                if (currentTagName) {
-                    try { await ghFetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/tags/${currentTagName}`, token, { method: 'DELETE' }); } catch(e) {}
-                }
-                downloadBtn.innerText = '✅ 雲端記錄已完全銷毀';
-            }, 3000);
-
-        } catch (e) {
-            console.error(e);
-            alert('透過數據流下載失敗，將回退至常規下載模式。');
-            downloadBtn.disabled = false;
-            downloadBtn.innerText = '嘗試常規下載';
-            downloadBtn.onclick = function() {
-                window.open(rawDownloadUrl, '_blank');
-            };
-        }
+            if (currentTagName) {
+                try { await ghFetch(`https://api.github.com/repos/${owner}/${repo}/git/refs/tags/${currentTagName}`, token, { method: 'DELETE' }); } catch(e) {}
+            }
+            downloadBtn.innerText = '✨ 下載完成，雲端痕跡已徹底銷毀！';
+            statusTitle.innerText = '🎉 所有任務已完成，雲端無任何殘留。';
+        }, 5000);
     }
 </script>
 </body>
