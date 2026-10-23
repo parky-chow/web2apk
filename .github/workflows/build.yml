@@ -105,15 +105,18 @@ jobs:
         run: |
           gradle assembleDebug
 
-          python3 -c '
+          cat << 'EOF' > release.py
           import os, re, shutil, subprocess
           suffix = re.sub(r"[^a-zA-Z0-9]", "", os.environ.get("APP_SUFFIX", "webtoapk")).lower() or "webtoapk"
           apk_name = f"{suffix}.apk"
           shutil.copy("app/build/outputs/apk/debug/app-debug.apk", apk_name)
           
           run_num = os.environ.get("GITHUB_RUN_NUMBER")
+          app_name_env = os.environ.get("APP_NAME", "App")
           tag = f"build-{run_num}"
-          title = f"{os.environ.get('APP_NAME')} (構建 #{run_num})"
+          title = f"{app_name_env} (構建 #{run_num})"
           
           subprocess.run(["gh", "release", "create", tag, apk_name, "-t", title, "-n", "Automated Web2APK"], check=True)
-          '
+          EOF
+          
+          python3 release.py
