@@ -44,13 +44,14 @@ jobs:
           APP_SUFFIX: ${{ github.event.inputs.app_id_suffix }}
           HAS_ICON: ${{ github.event.inputs.has_custom_icon }}
         run: |
-          python3 -c '
+          cat << 'EOF' > configure.py
           import os, re, shutil
           from PIL import Image
 
           url = os.environ.get("TARGET_URL") or "https://www.bing.com"
           name = os.environ.get("APP_NAME") or "我的應用"
-          suffix = re.sub(r"[^a-zA-Z0-9]", "", os.environ.get("APP_SUFFIX") or "webtoapk").lower() or "webtoapk"
+          suffix_raw = os.environ.get("APP_SUFFIX") or "webtoapk"
+          suffix = re.sub(r"[^a-zA-Z0-9]", "", suffix_raw).lower() or "webtoapk"
           has_icon = os.environ.get("HAS_ICON") == "true"
 
           icon_temp_path = "temp_icon.png"
@@ -87,27 +88,29 @@ jobs:
           manifest_path = "app/src/main/AndroidManifest.xml"
           with open(manifest_path, "r", encoding="utf-8") as f:
               m = f.read()
-          m = re.sub(r"android:label=\"[^\"]*\"", f"android:label=\"{name}\"", m)
+          m = re.sub(r'android:label="[^"]*"', f'android:label="{name}"', m)
           if has_icon:
-              m = re.sub(r"android:icon=\"[^\"]*\"", "android:icon=\"@mipmap/ic_launcher\"", m)
-              m = re.sub(r"android:roundIcon=\"[^\"]*\"", "android:roundIcon=\"@mipmap/ic_launcher_round\"", m)
+              m = re.sub(r'android:icon="[^"]*"', 'android:icon="@mipmap/ic_launcher"', m)
+              m = re.sub(r'android:roundIcon="[^"]*"', 'android:roundIcon="@mipmap/ic_launcher_round"', m)
           with open(manifest_path, "w", encoding="utf-8") as f:
               f.write(m)
 
           java_path = "app/src/main/java/com/example/webtoapk/MainActivity.java"
           with open(java_path, "r", encoding="utf-8") as f:
               c = f.read()
-          c = re.sub(r"private static final String TARGET_URL = \"[^\"]*\";", f"private static final String TARGET_URL = \"{url}\";", c)
+          c = re.sub(r'private static final String TARGET_URL = "[^"]*";', f'private static final String TARGET_URL = "{url}";', c)
           with open(java_path, "w", encoding="utf-8") as f:
               f.write(c)
 
           gradle_path = "app/build.gradle"
           with open(gradle_path, "r", encoding="utf-8") as f:
               c = f.read()
-          c = re.sub(r"applicationId \"[^\"]*\"", f"applicationId \"com.example.{suffix}\"", c)
+          c = re.sub(r'applicationId "[^"]*"', f'applicationId "com.example.{suffix}"', c)
           with open(gradle_path, "w", encoding="utf-8") as f:
               f.write(c)
-          '
+          EOF
+          
+          python3 configure.py
 
       - name: 4. 配置 JDK 17 環境
         uses: actions/setup-java@v4
@@ -129,16 +132,18 @@ jobs:
         run: |
           gradle assembleDebug
 
-          python3 -c '
+          cat << 'EOF' > release_apk.py
           import os, re, shutil, subprocess
+
           app_name = os.environ.get("APP_NAME", "").strip() or "我的應用"
           custom = os.environ.get("CUSTOM_NAME", "").strip()
           target_name = custom if custom else app_name
-          if not target_name.lower().endsWith(".apk"):
+          
+          if not target_name.lower().endswith(".apk"):
               target_name += ".apk"
           
-          # 僅過濾非法字元，完整保留中文
-          target_name = re.sub(r"[\\/:*?\"<>|]", "_", target_name)
+          # 過濾非法字元
+          target_name = re.sub(r'[\\/*?:"<>|]', '_', target_name)
           
           src = "app/build/outputs/apk/debug/app-debug.apk"
           shutil.copy(src, target_name)
@@ -146,12 +151,13 @@ jobs:
           run_num = os.environ.get("GITHUB_RUN_NUMBER")
           tag = f"build-{run_num}"
           title = f"{app_name} (構建 #{run_num})"
-          notes = f"目標網址: {os.environ.get(\"TARGET_URL\")}"
+          notes = f"目標網址: {os.environ.get('TARGET_URL', '')}"
           
-          print(f"==== 準備使用 GitHub 官方 CLI 創建 Release ====")
+          print("==== 準備使用 GitHub 官方 CLI 創建 Release ====")
           print(f"文件名: {target_name}")
           
-          # 使用官方 gh cli 繞過 nodejs 第三方套件的 header 編碼限制
           subprocess.run(["gh", "release", "create", tag, target_name, "-t", title, "-n", notes], check=True)
           print("✅ 中文 APK 已成功發布至 Releases！")
-          '
+          EOF
+          
+          python3 release_apk.py
