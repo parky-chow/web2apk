@@ -120,15 +120,38 @@ jobs:
         with:
           gradle-version: '8.5'
 
-      - name: 6. 編譯生成 APK
+      - name: 6. 編譯、中文重命名與官方直傳發布
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_URL: ${{ github.event.inputs.target_url }}
+          APP_NAME: ${{ github.event.inputs.app_name }}
+          CUSTOM_NAME: ${{ github.event.inputs.custom_file_name }}
         run: |
           gradle assembleDebug
-          cp app/build/outputs/apk/debug/app-debug.apk ./app-release.apk
 
-      - name: 7. 發布到 Releases 生成下載附件
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: "${{ github.event.inputs.app_name || 'App' }} (構建 #${{ github.run_number }})"
-          body: "目標網址: ${{ github.event.inputs.target_url }}"
-          files: ./app-release.apk
+          python3 -c '
+          import os, re, shutil, subprocess
+          app_name = os.environ.get("APP_NAME", "").strip() or "我的應用"
+          custom = os.environ.get("CUSTOM_NAME", "").strip()
+          target_name = custom if custom else app_name
+          if not target_name.lower().endsWith(".apk"):
+              target_name += ".apk"
+          
+          # 僅過濾非法字元，完整保留中文
+          target_name = re.sub(r"[\\/:*?\"<>|]", "_", target_name)
+          
+          src = "app/build/outputs/apk/debug/app-debug.apk"
+          shutil.copy(src, target_name)
+          
+          run_num = os.environ.get("GITHUB_RUN_NUMBER")
+          tag = f"build-{run_num}"
+          title = f"{app_name} (構建 #{run_num})"
+          notes = f"目標網址: {os.environ.get(\"TARGET_URL\")}"
+          
+          print(f"==== 準備使用 GitHub 官方 CLI 創建 Release ====")
+          print(f"文件名: {target_name}")
+          
+          # 使用官方 gh cli 繞過 nodejs 第三方套件的 header 編碼限制
+          subprocess.run(["gh", "release", "create", tag, target_name, "-t", title, "-n", notes], check=True)
+          print("✅ 中文 APK 已成功發布至 Releases！")
+          '
