@@ -263,17 +263,33 @@
             if (globalPureBase64) {
                 statusTitle.innerText = '📤 正在傳輸自定義圖標資源...';
                 progressFill.style.width = '10%';
+                
+                // 核心修復：為了覆蓋已存在的舊圖標，必須先獲取現有文件的 sha
+                let fileSha = undefined;
+                try {
+                    const getRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/contents/temp_icon.png?ref=${defaultBranch}`, token);
+                    if (getRes.ok) {
+                        const fileInfo = await getRes.json();
+                        fileSha = fileInfo.sha;
+                    }
+                } catch(e) {}
+
                 try {
                     const putRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/contents/temp_icon.png`, token, {
                         method: 'PUT',
                         body: JSON.stringify({
                             message: 'upload temporary app icon',
                             content: globalPureBase64,
-                            branch: defaultBranch
+                            branch: defaultBranch,
+                            sha: fileSha // 攜帶 sha 才能成功覆蓋舊文件
                         })
                     });
-                    if (putRes.ok) hasCustomIcon = "true";
-                } catch(e) {}
+                    if (putRes.ok) {
+                        hasCustomIcon = "true";
+                    }
+                } catch(e) {
+                    console.error("圖標上傳失敗:", e);
+                }
             }
 
             statusTitle.innerText = '⏳ 正在向 GitHub 發送構建指令...';
