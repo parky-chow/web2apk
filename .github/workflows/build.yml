@@ -13,16 +13,12 @@ on:
         default: '我的應用'
       app_id_suffix:
         description: '包名後綴 (純英文字母)'
-        required: false
+        required: true
         default: 'webtoapk'
       has_custom_icon:
         description: '是否有自定義圖標'
-        required: false
+        required: true
         default: 'false'
-      custom_file_name:
-        description: '自定義下載APK文件名'
-        required: false
-        default: ''
 
 permissions:
   contents: write
@@ -31,13 +27,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. 檢出源碼 (Checkout)
+      - name: 1. 檢出源碼
         uses: actions/checkout@v4
 
-      - name: 2. 安裝 Python 圖像處理庫 Pillow
+      - name: 2. 安裝依賴
         run: pip install Pillow
 
-      - name: 3. 動態寫入配置與圖標處理
+      - name: 3. 核心配置注入
         env:
           TARGET_URL: ${{ github.event.inputs.target_url }}
           APP_NAME: ${{ github.event.inputs.app_name }}
@@ -50,114 +46,74 @@ jobs:
 
           url = os.environ.get("TARGET_URL") or "https://www.bing.com"
           name = os.environ.get("APP_NAME") or "我的應用"
-          suffix_raw = os.environ.get("APP_SUFFIX") or "webtoapk"
-          suffix = re.sub(r"[^a-zA-Z0-9]", "", suffix_raw).lower() or "webtoapk"
+          suffix = re.sub(r"[^a-zA-Z0-9]", "", os.environ.get("APP_SUFFIX") or "webtoapk").lower() or "webtoapk"
           has_icon = os.environ.get("HAS_ICON") == "true"
 
-          icon_temp_path = "temp_icon.png"
-          if has_icon and os.path.exists(icon_temp_path):
+          icon_temp = "temp_icon.png"
+          if has_icon and os.path.exists(icon_temp):
               try:
-                  img = Image.open(icon_temp_path).convert("RGBA")
+                  img = Image.open(icon_temp).convert("RGBA")
                   min_dim = min(img.size)
-                  left = (img.width - min_dim) / 2
-                  top = (img.height - min_dim) / 2
-                  img = img.crop((left, top, left + min_dim, top + min_dim))
+                  l, t = (img.width - min_dim) / 2, (img.height - min_dim) / 2
+                  img = img.crop((l, t, l + min_dim, t + min_dim))
+                  for folder, size in {"mipmap-mdpi":48, "mipmap-hdpi":72, "mipmap-xhdpi":96, "mipmap-xxhdpi":144, "mipmap-xxxhdpi":192, "drawable":192}.items():
+                      d = f"app/src/main/res/{folder}"
+                      os.makedirs(d, exist_ok=True)
+                      img.resize((size, size), Image.Resampling.LANCZOS).save(f"{d}/ic_launcher.png")
+                      img.resize((size, size), Image.Resampling.LANCZOS).save(f"{d}/ic_launcher_round.png")
+                  if os.path.exists("app/src/main/res/mipmap-anydpi-v26"):
+                      shutil.rmtree("app/src/main/res/mipmap-anydpi-v26")
+                  os.remove(icon_temp)
+              except: pass
 
-                  sizes = {
-                      "mipmap-mdpi": 48,
-                      "mipmap-hdpi": 72,
-                      "mipmap-xhdpi": 96,
-                      "mipmap-xxhdpi": 144,
-                      "mipmap-xxxhdpi": 192,
-                      "drawable": 192
-                  }
-                  for folder, size in sizes.items():
-                      dir_path = f"app/src/main/res/{folder}"
-                      os.makedirs(dir_path, exist_ok=True)
-                      resized = img.resize((size, size), Image.Resampling.LANCZOS)
-                      resized.save(os.path.join(dir_path, "ic_launcher.png"))
-                      resized.save(os.path.join(dir_path, "ic_launcher_round.png"))
-
-                  anydpi_path = "app/src/main/res/mipmap-anydpi-v26"
-                  if os.path.exists(anydpi_path):
-                      shutil.rmtree(anydpi_path)
-                  os.remove(icon_temp_path)
-              except Exception as e:
-                  print("圖標處理警告:", e)
-
-          manifest_path = "app/src/main/AndroidManifest.xml"
-          with open(manifest_path, "r", encoding="utf-8") as f:
-              m = f.read()
+          m_path = "app/src/main/AndroidManifest.xml"
+          with open(m_path, "r", encoding="utf-8") as f: m = f.read()
           m = re.sub(r'android:label="[^"]*"', f'android:label="{name}"', m)
           if has_icon:
               m = re.sub(r'android:icon="[^"]*"', 'android:icon="@mipmap/ic_launcher"', m)
               m = re.sub(r'android:roundIcon="[^"]*"', 'android:roundIcon="@mipmap/ic_launcher_round"', m)
-          with open(manifest_path, "w", encoding="utf-8") as f:
-              f.write(m)
+          with open(m_path, "w", encoding="utf-8") as f: f.write(m)
 
-          java_path = "app/src/main/java/com/example/webtoapk/MainActivity.java"
-          with open(java_path, "r", encoding="utf-8") as f:
-              c = f.read()
+          j_path = "app/src/main/java/com/example/webtoapk/MainActivity.java"
+          with open(j_path, "r", encoding="utf-8") as f: c = f.read()
           c = re.sub(r'private static final String TARGET_URL = "[^"]*";', f'private static final String TARGET_URL = "{url}";', c)
-          with open(java_path, "w", encoding="utf-8") as f:
-              f.write(c)
+          with open(j_path, "w", encoding="utf-8") as f: f.write(c)
 
-          gradle_path = "app/build.gradle"
-          with open(gradle_path, "r", encoding="utf-8") as f:
-              c = f.read()
+          g_path = "app/build.gradle"
+          with open(g_path, "r", encoding="utf-8") as f: c = f.read()
           c = re.sub(r'applicationId "[^"]*"', f'applicationId "com.example.{suffix}"', c)
-          with open(gradle_path, "w", encoding="utf-8") as f:
-              f.write(c)
+          with open(g_path, "w", encoding="utf-8") as f: f.write(c)
           EOF
-          
           python3 configure.py
 
-      - name: 4. 配置 JDK 17 環境
+      - name: 4. JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 5. 配置 Gradle 8.5 編譯工具
+      - name: 5. Gradle 8.5
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.5'
 
-      - name: 6. 編譯、中文重命名與官方直傳發布
+      - name: 6. 構建並發布
         env:
           GH_TOKEN: ${{ github.token }}
-          TARGET_URL: ${{ github.event.inputs.target_url }}
           APP_NAME: ${{ github.event.inputs.app_name }}
-          CUSTOM_NAME: ${{ github.event.inputs.custom_file_name }}
+          APP_SUFFIX: ${{ github.event.inputs.app_id_suffix }}
         run: |
           gradle assembleDebug
 
-          cat << 'EOF' > release_apk.py
+          python3 -c '
           import os, re, shutil, subprocess
-
-          app_name = os.environ.get("APP_NAME", "").strip() or "我的應用"
-          custom = os.environ.get("CUSTOM_NAME", "").strip()
-          target_name = custom if custom else app_name
-          
-          if not target_name.lower().endswith(".apk"):
-              target_name += ".apk"
-          
-          # 過濾非法字元
-          target_name = re.sub(r'[\\/*?:"<>|]', '_', target_name)
-          
-          src = "app/build/outputs/apk/debug/app-debug.apk"
-          shutil.copy(src, target_name)
+          suffix = re.sub(r"[^a-zA-Z0-9]", "", os.environ.get("APP_SUFFIX", "webtoapk")).lower() or "webtoapk"
+          apk_name = f"{suffix}.apk"
+          shutil.copy("app/build/outputs/apk/debug/app-debug.apk", apk_name)
           
           run_num = os.environ.get("GITHUB_RUN_NUMBER")
           tag = f"build-{run_num}"
-          title = f"{app_name} (構建 #{run_num})"
-          notes = f"目標網址: {os.environ.get('TARGET_URL', '')}"
+          title = f"{os.environ.get('APP_NAME')} (構建 #{run_num})"
           
-          print("==== 準備使用 GitHub 官方 CLI 創建 Release ====")
-          print(f"文件名: {target_name}")
-          
-          subprocess.run(["gh", "release", "create", tag, target_name, "-t", title, "-n", notes], check=True)
-          print("✅ 中文 APK 已成功發布至 Releases！")
-          EOF
-          
-          python3 release_apk.py
+          subprocess.run(["gh", "release", "create", tag, apk_name, "-t", title, "-n", "Automated Web2APK"], check=True)
+          '
