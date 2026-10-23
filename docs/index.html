@@ -142,10 +142,10 @@
                     <input type="text" class="form-input" id="appSuffix" placeholder="純字母，如 shopapp" value="myapp01">
                 </div>
             </div>
-
-            <div class="form-group">
-                <label>💾 自定義下載 APK 文件名 (支持中文，留空則自動使用應用名稱)</label>
-                <input type="text" class="form-input" id="customFileName" placeholder="例如：我的內部商城 (無需加 .apk)">
+            
+            <div class="hint" style="margin-bottom:15px; background: #f1f5f9; padding: 10px; border-radius: 8px; border: 1px dashed #cbd5e1;">
+                💡 <b>溫馨提示：</b> 為保證 100% 穩定下載，APK 實體文件將自動使用你的「英文標識」命名（例如 myapp01.apk）。<br>
+                這<b>完全不會</b>影響手機安裝，安裝至手機桌面後，App 名稱依然會完美顯示為你填寫的中文名稱！
             </div>
 
             <button id="buildBtn" class="btn" onclick="startBuild()">🚀 開始雲端編譯 APK</button>
@@ -154,7 +154,6 @@
                 <div id="statusTitle" style="font-weight: 600; font-size: 14px;">正在請求雲端構建服務器...</div>
                 <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
                 <ul id="stepList" class="step-list"></ul>
-                <!-- 核心：回歸最原生的直連跳轉下載，因為雲端已經將檔案正確命名為中文了 -->
                 <a id="downloadBtn" class="download-btn" href="#" target="_blank" onclick="handleClickDownload(event)">⬇️ 立即下載編譯好的 APK</a>
                 <div id="backupLink" class="backup-link">
                     <a id="backupA" target="_blank" rel="noopener noreferrer">點此直接打開 Releases 下載列表</a>
@@ -213,7 +212,6 @@
         const targetUrl = document.getElementById('targetUrl').value.trim();
         const appName = document.getElementById('appName').value.trim();
         const appSuffix = document.getElementById('appSuffix').value.trim() || 'webtoapk';
-        const customFileName = document.getElementById('customFileName').value.trim();
 
         if (!owner || !repo || !token) {
             alert('請先展開頂部【首次使用配置】，填寫 GitHub 用戶名、倉庫名和 Token！');
@@ -265,29 +263,17 @@
             if (globalPureBase64) {
                 statusTitle.innerText = '📤 正在傳輸自定義圖標資源...';
                 progressFill.style.width = '10%';
-                
-                let fileSha = undefined;
                 try {
-                    const getRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/contents/temp_icon.png?ref=${defaultBranch}`, token);
-                    if (getRes.ok) {
-                        const fileInfo = await getRes.json();
-                        fileSha = fileInfo.sha;
-                    }
+                    const putRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/contents/temp_icon.png`, token, {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                            message: 'upload temporary app icon',
+                            content: globalPureBase64,
+                            branch: defaultBranch
+                        })
+                    });
+                    if (putRes.ok) hasCustomIcon = "true";
                 } catch(e) {}
-
-                const putRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/contents/temp_icon.png`, token, {
-                    method: 'PUT',
-                    body: JSON.stringify({
-                        message: 'upload temporary app icon',
-                        content: globalPureBase64,
-                        branch: defaultBranch,
-                        sha: fileSha
-                    })
-                });
-
-                if (putRes.ok) {
-                    hasCustomIcon = "true";
-                }
             }
 
             statusTitle.innerText = '⏳ 正在向 GitHub 發送構建指令...';
@@ -304,17 +290,13 @@
                             target_url: targetUrl,
                             app_name: appName,
                             app_id_suffix: appSuffix,
-                            has_custom_icon: hasCustomIcon,
-                            custom_file_name: customFileName
+                            has_custom_icon: hasCustomIcon
                         }
                     })
                 }
             );
 
-            if (!dispatchRes.ok) {
-                const errText = await dispatchRes.text();
-                throw new Error(`觸發編譯失敗 (${dispatchRes.status}): ${errText}`);
-            }
+            if (!dispatchRes.ok) throw new Error(`觸發編譯失敗 (${dispatchRes.status})`);
 
             statusTitle.innerText = '🔄 已觸發雲端任務，正在等待 GitHub 分配排程...';
             progressFill.style.width = '20%';
@@ -335,9 +317,7 @@
                 }
             }
 
-            if (!runObj) {
-                throw new Error('任務排隊超時。請前往倉庫 Actions 頁面確認 GitHub 伺服器排程。');
-            }
+            if (!runObj) throw new Error('任務排隊超時。請前往倉庫 Actions 頁面確認 GitHub 伺服器排程。');
 
             const runId = runObj.id;
             const runNumber = runObj.run_number;
@@ -389,26 +369,8 @@
         const expectedTag = `build-${runNumber}`;
         const statusTitle = document.getElementById('statusTitle');
 
-        // 輪詢最多 20 次，總容錯時間 40 秒
         for (let i = 0; i < 20; i++) {
             statusTitle.innerText = `⏳ 正在連接雲端發布附件... (${i + 1}/20)`;
-
-            try {
-                const listRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=3`, token);
-                if (listRes.ok) {
-                    const list = await listRes.json();
-                    if (list && list.length > 0) {
-                        const rel = list.find(r => r.tag_name === expectedTag) || list[0];
-                        if (rel.assets && rel.assets.length > 0) {
-                            const asset = rel.assets.find(a => a.name.endsWith('.apk')) || rel.assets[0];
-                            if (asset && asset.browser_download_url) {
-                                showDownloadButton(asset, rel.id, rel.tag_name, downloadBtn);
-                                return;
-                            }
-                        }
-                    }
-                }
-            } catch(e) {}
 
             try {
                 const tagRes = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${expectedTag}`, token);
@@ -436,7 +398,7 @@
     function showDownloadButton(asset, relId, tagName, downloadBtn) {
         currentReleaseId = relId;
         currentTagName = tagName;
-        const displayName = decodeURIComponent(asset.name); // 顯示雲端真實文件名 (已由官方 CLI 正確命名)
+        const displayName = decodeURIComponent(asset.name);
         
         downloadBtn.href = asset.browser_download_url;
         downloadBtn.innerText = `⬇️ 立即下載 ${displayName} (${(asset.size / 1024 / 1024).toFixed(2)} MB)`;
